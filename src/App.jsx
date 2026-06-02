@@ -508,14 +508,24 @@ export default function StravaIntelligence() {
   const exchangeCode = async () => {
     setLoading(true); setError(null);
     try {
-      const r = await fetch("https://www.strava.com/oauth/token", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ client_id:STRAVA_CLIENT_ID, client_secret:secret, code, grant_type:"authorization_code" })
+      // Em vez de ir ao Strava, vai à nossa própria Serverless Function
+      const r = await fetch("/api/auth", {
+        method: "POST", 
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }) // Enviamos apenas o código recebido no URL
       });
+      
       const d = await r.json();
-      if (d.access_token) { setToken(d.access_token); setSecretMode(false); }
-      else setError("Autenticação falhou. Verifica o Client Secret.");
-    } catch { setError("Erro de rede."); }
+      
+      if (d.access_token) { 
+        setToken(d.access_token); 
+        setSecretMode(false); 
+      } else {
+        setError("Autenticação falhou: " + (d.error || "Verifica as credenciais."));
+      }
+    } catch { 
+      setError("Erro de rede ao contactar o servidor."); 
+    }
     setLoading(false);
   };
 
