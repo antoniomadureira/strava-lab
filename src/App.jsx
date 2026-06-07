@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from "react";
+import "./index.css";
+import "./App.css";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip,
   BarChart, Bar, CartesianGrid, AreaChart, Area, Legend,
@@ -7,13 +9,14 @@ import {
 } from "recharts";
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
-const STRAVA_CLIENT_ID = "238201"; // ← troca pelo teu Client ID em strava.com/settings/api
+// Client ID do Strava (não é segredo — pode ficar no código)
+const STRAVA_CLIENT_ID = import.meta.env.VITE_STRAVA_CLIENT_ID || "238201";
 const REDIRECT_URI = typeof window !== "undefined"
   ? window.location.href.split("?")[0].split("#")[0] : "";
 const STRAVA_AUTH_URL =
   `https://www.strava.com/oauth/authorize?client_id=${STRAVA_CLIENT_ID}` +
   `&response_type=code&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
-  `&approval_prompt=force&scope=read,activity:read_all,profile:read_all`;
+  `&approval_prompt=auto&scope=read,activity:read_all,profile:read_all`;
 
 // ─── MOCK ─────────────────────────────────────────────────────────────────────
 const MOCK_ATHLETE = {
@@ -285,13 +288,14 @@ function HeatMap({ activities }) {
     return t<.25?"#7B2D0B":t<.5?"#B84200":t<.75?"#E05000":"#FC4C02";
   };
   return (
-    <div style={{ overflowX:"auto" }}>
-      <div style={{ display:"flex", gap:2, minWidth:700 }}>
+    <div className="heatmap-scroll">
+      <div className="heatmap-grid">
         {weeks.map((week,wi) => (
-          <div key={wi} style={{ display:"flex", flexDirection:"column", gap:2 }}>
+          <div key={wi} className="heatmap-week">
             {week.map((day,di) => (
               <div key={di} title={`${day.date}: ${day.km.toFixed(1)}km`}
-                style={{ width:12, height:12, borderRadius:2, background:col(day.km,day.future), transition:"transform .1s", cursor:day.km?"pointer":"default" }}
+                className="heatmap-day"
+                style={{ background:col(day.km,day.future), cursor:day.km?"pointer":"default" }}
                 onMouseEnter={e=>e.currentTarget.style.transform="scale(1.5)"}
                 onMouseLeave={e=>e.currentTarget.style.transform=""}/>
             ))}
@@ -312,7 +316,7 @@ function ActivityRow({ act }) {
   const pace  = speed > 0 ? 1000/speed : 0;
   const hrZ   = act.average_heartrate ? getZone(act.average_heartrate) : null;
   return (
-    <div style={{ display:"grid", gridTemplateColumns:"1fr 80px 70px 70px 80px 60px", gap:8, alignItems:"center", padding:"11px 16px", borderBottom:`1px solid rgba(255,255,255,.04)`, transition:"background .12s" }}
+    <div className="act-row"
       onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,.025)"}
       onMouseLeave={e=>e.currentTarget.style.background=""}>
       <div>
@@ -323,14 +327,14 @@ function ActivityRow({ act }) {
         <div style={{ fontSize:10, color:"rgba(255,255,255,.3)", marginTop:1 }}>{fmtDate(act.start_date)} · {act.type}</div>
       </div>
       <span style={{ fontSize:12, color:"#FC4C02", fontWeight:700 }}>{fmtDist(act.distance)}</span>
-      <span style={{ fontSize:12, color:"rgba(255,255,255,.55)" }}>{fmtTime(act.moving_time)}</span>
+      <span className="act-col-time" style={{ fontSize:12, color:"rgba(255,255,255,.55)" }}>{fmtTime(act.moving_time)}</span>
       {act.type==="Run"
         ? <span style={{ fontSize:12, color:"rgba(255,255,255,.55)" }}>{fmtPace(pace)}/km</span>
         : <span style={{ fontSize:12, color:"rgba(255,255,255,.3)" }}>—</span>}
       {hrZ
         ? <span style={{ fontSize:11, fontWeight:700, color:hrZ.color, background:`${hrZ.color}22`, borderRadius:4, padding:"2px 6px", textAlign:"center" }}>{hrZ.label} {Math.round(act.average_heartrate)}</span>
         : <span/>}
-      <span style={{ fontSize:11, color:"rgba(255,255,255,.3)" }}>↑{Math.round(act.total_elevation_gain||0)}m</span>
+      <span className="act-col-elev" style={{ fontSize:11, color:"rgba(255,255,255,.3)" }}>↑{Math.round(act.total_elevation_gain||0)}m</span>
     </div>
   );
 }
@@ -495,39 +499,34 @@ export default function StravaIntelligence() {
   const [tab,        setTab]        = useState("overview");
   const [useMock,    setUseMock]    = useState(false);
   const [error,      setError]      = useState(null);
-  const [code,       setCode]       = useState(null);
-  const [secret,     setSecret]     = useState("");
-  const [secretMode, setSecretMode] = useState(false);
 
+  // ── OAuth callback: apanha o ?code= que o Strava devolve e troca por token ──
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
-    const c = p.get("code");
-    if (c) { setCode(c); setSecretMode(true); window.history.replaceState({},  "", window.location.pathname); }
-  }, []);
+    const code = p.get("code");
+    const denied = p.get("error"); // utilizador clicou "Negar" na página do Strava
+    window.history.replaceState({}, "", window.location.pathname); // limpa a URL
+    if (denied) { setError("Acesso negado pelo utilizador."); return; }
+    if (!code) return;
 
-  const exchangeCode = async () => {
-    setLoading(true); setError(null);
-    try {
-      // Em vez de ir ao Strava, vai à nossa própria Serverless Function
-      const r = await fetch("/api/auth", {
-        method: "POST", 
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }) // Enviamos apenas o código recebido no URL
-      });
-      
-      const d = await r.json();
-      
-      if (d.access_token) { 
-        setToken(d.access_token); 
-        setSecretMode(false); 
-      } else {
-        setError("Autenticação falhou: " + (d.error || "Verifica as credenciais."));
-      }
-    } catch { 
-      setError("Erro de rede ao contactar o servidor."); 
-    }
-    setLoading(false);
-  };
+    setLoading(true);
+    setError(null);
+    fetch("/api/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    })
+      .then(r => r.json())
+      .then(d => {
+        if (d.access_token) {
+          setToken(d.access_token);
+        } else {
+          setError("Autenticação falhou: " + (d.error || "verifica as variáveis de ambiente na Vercel."));
+        }
+      })
+      .catch(() => setError("Erro de rede ao contactar o servidor."))
+      .finally(() => setLoading(false));
+  }, []);
 
   useEffect(() => {
     if (!token) return;
@@ -595,50 +594,61 @@ export default function StravaIntelligence() {
   // ─── LOGIN SCREEN ──────────────────────────────────────────────────────────
   if (!athlete && !loading) {
     return (
-      <div style={{ minHeight:"100vh", background:C.bg, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'DM Sans',sans-serif", padding:24 }}>
+      <div className="login-screen">
         <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;700;800;900&family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet"/>
-        <div style={{ maxWidth:400, width:"100%", textAlign:"center" }}>
+        <div className="login-box">
+
           {/* Logo */}
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:14, marginBottom:32 }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:14, marginBottom:40 }}>
             <div style={{ width:56, height:56, borderRadius:16, background:"linear-gradient(135deg,#FC4C02,#c93700)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28 }}>🏃</div>
             <div style={{ textAlign:"left" }}>
-              <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:36, fontWeight:900, letterSpacing:"-1px", color:"#fff", lineHeight:1 }}>STRAVA<span style={{color:"#FC4C02"}}>.</span>INTEL</div>
+              <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:36, fontWeight:900, letterSpacing:"-1px", color:"#fff", lineHeight:1 }}>
+                STRAVA<span style={{color:"#FC4C02"}}>.</span>INTEL
+              </div>
               <div style={{ fontSize:12, color:C.muted, letterSpacing:"0.08em" }}>TRAINING INTELLIGENCE DASHBOARD</div>
             </div>
           </div>
 
-          {secretMode ? (
-            <Card style={{ padding:24, textAlign:"left" }}>
-              <div style={{ fontSize:13, color:"rgba(255,255,255,.6)", marginBottom:16, lineHeight:1.6 }}>
-                ✅ Código recebido! Insere o teu <strong style={{color:"#FC4C02"}}>Client Secret</strong> do Strava para completar:
-              </div>
-              <input value={secret} onChange={e=>setSecret(e.target.value)} placeholder="Client Secret do Strava..."
-                style={{ width:"100%", boxSizing:"border-box", background:"rgba(255,255,255,.07)", border:`1px solid ${C.faint}`, borderRadius:10, padding:"11px 14px", color:C.text, fontSize:13, outline:"none", marginBottom:10 }}/>
-              <button onClick={exchangeCode}
-                style={{ width:"100%", background:"#FC4C02", border:"none", borderRadius:10, padding:13, color:"#fff", fontWeight:700, fontSize:14, cursor:"pointer" }}>
-                Autenticar →
-              </button>
-            </Card>
-          ) : (
-            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-              <div style={{ background:"rgba(255,255,255,.03)", border:`1px solid ${C.border}`, borderRadius:12, padding:"11px 14px", fontSize:12, color:"rgba(255,255,255,.4)", textAlign:"left" }}>
-                ⚙️ Para OAuth: substitui <code style={{color:"#FC4C02"}}>YOUR_CLIENT_ID</code> e define o Callback Domain em strava.com/settings/api
-              </div>
-              {STRAVA_CLIENT_ID !== "YOUR_CLIENT_ID"
-                ? <a href={STRAVA_AUTH_URL} style={{ display:"block", background:"#FC4C02", color:"#fff", textDecoration:"none", borderRadius:12, padding:"14px 24px", fontWeight:700, fontSize:15 }}>
-                    Conectar com Strava →
-                  </a>
-                : <div style={{ background:"rgba(252,76,2,.08)", border:"1px solid rgba(252,76,2,.25)", borderRadius:12, padding:"12px 16px", fontSize:12, color:"rgba(252,76,2,.8)", textAlign:"left" }}>
-                    OAuth desativado · substitui YOUR_CLIENT_ID primeiro
-                  </div>
-              }
-              <button onClick={loadMock}
-                style={{ background:"rgba(255,255,255,.05)", border:`1px solid ${C.border}`, borderRadius:12, padding:"13px 24px", color:"rgba(255,255,255,.65)", fontWeight:600, fontSize:14, cursor:"pointer" }}>
-                👁️ Ver demo com dados simulados
-              </button>
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            {/* Botão oficial Strava — só aparece se o Client ID estiver configurado */}
+            {STRAVA_CLIENT_ID && STRAVA_CLIENT_ID !== "SEU_CLIENT_ID"
+              ? <a href={STRAVA_AUTH_URL}
+                  style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:12, background:"#FC4C02", color:"#fff", textDecoration:"none", borderRadius:12, padding:"15px 24px", fontWeight:700, fontSize:15, transition:"filter .2s" }}
+                  onMouseEnter={e=>e.currentTarget.style.filter="brightness(1.1)"}
+                  onMouseLeave={e=>e.currentTarget.style.filter=""}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                    <path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0l-7 13.828h4.169"/>
+                  </svg>
+                  Ligar com Strava
+                </a>
+              : <div style={{ background:"rgba(252,76,2,.08)", border:"1px solid rgba(252,76,2,.3)", borderRadius:12, padding:"16px 18px", fontSize:13, color:"rgba(252,76,2,.9)", textAlign:"left", lineHeight:1.7 }}>
+                  <strong>⚙️ Configuração necessária</strong><br/>
+                  Em <code>App.jsx</code>, substitui o valor de <code style={{color:"#FC4C02"}}>STRAVA_CLIENT_ID</code> pelo teu Client ID em{" "}
+                  <a href="https://www.strava.com/settings/api" target="_blank" rel="noreferrer" style={{color:"#FC4C02"}}>strava.com/settings/api</a>.<br/>
+                  Na Vercel, define a variável de ambiente <code>STRAVA_CLIENT_SECRET</code>.
+                </div>
+            }
+
+            {/* Demo */}
+            <button onClick={loadMock}
+              style={{ background:"rgba(255,255,255,.05)", border:`1px solid ${C.border}`, borderRadius:12, padding:"13px 24px", color:"rgba(255,255,255,.65)", fontWeight:600, fontSize:14, cursor:"pointer", transition:"background .18s" }}
+              onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,.09)"}
+              onMouseLeave={e=>e.currentTarget.style.background="rgba(255,255,255,.05)"}>
+              👁️ Ver demo com dados simulados
+            </button>
+          </div>
+
+          {error && (
+            <div style={{ marginTop:16, background:"rgba(229,57,53,.1)", border:"1px solid rgba(229,57,53,.3)", borderRadius:10, padding:"11px 14px", fontSize:13, color:"#ef9a9a", lineHeight:1.6 }}>
+              ⚠️ {error}
             </div>
           )}
-          {error && <p style={{ color:"#e53935", fontSize:13, marginTop:12 }}>{error}</p>}
+
+          {/* Rodapé de ajuda */}
+          <p style={{ marginTop:28, fontSize:11, color:"rgba(255,255,255,.22)", lineHeight:1.8 }}>
+            Os teus dados ficam apenas no browser durante a sessão.<br/>
+            Nenhum dado é armazenado nos nossos servidores.
+          </p>
         </div>
       </div>
     );
@@ -657,54 +667,46 @@ export default function StravaIntelligence() {
 
   // ─── MAIN DASHBOARD ────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight:"100vh", background:C.bg, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>
+    <div className="app-shell">
       <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;700;800;900&family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet"/>
-      <style>{`
-        *{box-sizing:border-box}
-        ::-webkit-scrollbar{width:4px;height:4px}
-        ::-webkit-scrollbar-thumb{background:rgba(252,76,2,.35);border-radius:2px}
-        @keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
-        .page{animation:fadeUp .35s ease forwards}
-        @keyframes spin{to{transform:rotate(360deg)}}
-      `}</style>
 
       {/* ── Header ── */}
-      <div style={{ borderBottom:`1px solid ${C.border}`, padding:"0 24px" }}>
-        <div style={{ maxWidth:1200, margin:"0 auto", display:"flex", alignItems:"center", justifyContent:"space-between", height:58 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+      <header className="app-header">
+        <div className="app-header-inner">
+          <div className="app-logo">
             <span style={{ fontSize:20 }}>🏃</span>
-            <span style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:22, fontWeight:900, letterSpacing:".04em" }}>
+            <span className="app-logo-text">
               STRAVA<span style={{color:"#FC4C02"}}>.</span>INTEL
             </span>
-            {useMock && <span style={{ fontSize:10, background:"rgba(255,183,0,.12)", color:"#ffb300", border:"1px solid rgba(255,183,0,.25)", borderRadius:4, padding:"2px 8px", letterSpacing:".06em" }}>DEMO</span>}
+            {useMock && <span style={{ fontSize:10, background:"rgba(255,183,0,.12)", color:"#ffb300", border:"1px solid rgba(255,183,0,.25)", borderRadius:4, padding:"2px 8px", letterSpacing:".06em", flexShrink:0 }}>DEMO</span>}
           </div>
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <span style={{ fontSize:13, color:C.muted }}>{athlete?.firstname} {athlete?.lastname}</span>
-            <div style={{ width:8, height:8, borderRadius:"50%", background:"#4caf50" }}/>
+          <div className="app-user">
+            <span className="app-user-name">{athlete?.firstname} {athlete?.lastname}</span>
+            <div className="app-online-dot"/>
           </div>
         </div>
-      </div>
+      </header>
 
       {/* ── Tabs ── */}
-      <div style={{ borderBottom:`1px solid rgba(255,255,255,.05)`, padding:"0 24px", overflowX:"auto" }}>
-        <div style={{ maxWidth:1200, margin:"0 auto", display:"flex" }}>
+      <nav className="tab-bar">
+        <div className="tab-bar-inner">
           {tabs.map(t => (
-            <button key={t.id} onClick={()=>setTab(t.id)}
-              style={{ background:"none", border:"none", borderBottom:`2px solid ${tab===t.id?"#FC4C02":"transparent"}`, padding:"13px 16px", color:tab===t.id?"#FC4C02":"rgba(255,255,255,.38)", cursor:"pointer", fontSize:12, fontWeight:700, whiteSpace:"nowrap", transition:"color .18s", display:"flex", alignItems:"center", gap:5, letterSpacing:".02em" }}>
-              <span>{t.icon}</span>{t.label}
+            <button key={t.id} onClick={()=>setTab(t.id)} className={`tab-btn${tab===t.id?" active":""}`}>
+              <span className="tab-icon">{t.icon}</span>
+              <span className="tab-label">{t.label}</span>
             </button>
           ))}
         </div>
-      </div>
+      </nav>
 
       {/* ── Page content ── */}
-      <div style={{ maxWidth:1200, margin:"0 auto", padding:"22px 24px 48px" }} key={tab} className="page">
+      <div key={tab} className="page-content page">
 
         {/* ══ OVERVIEW ══════════════════════════════════════════════════════════ */}
         {tab === "overview" && (
           <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
             {/* KPI row */}
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10 }}>
+            <div className="kpi-grid">
               <Stat icon="🏅" label="Corridas (90d)"      value={runs.length}                      accent/>
               <Stat icon="📏" label="Distância total"     value={fmtDist(runs.reduce((s,r)=>s+r.distance,0))}/>
               <Stat icon="⏱️" label="Tempo total"         value={fmtTime(runs.reduce((s,r)=>s+r.moving_time,0))}/>
@@ -714,7 +716,7 @@ export default function StravaIntelligence() {
             </div>
 
             {/* TSB + Radar */}
-            <div style={{ display:"grid", gridTemplateColumns:"260px 1fr 1fr", gap:14 }}>
+            <div className="overview-charts" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:14 }}>
               <TSBGauge tsb={latest.tsb} ctl={latest.ctl} atl={latest.atl}/>
               {/* CTL/ATL/TSB mini chart */}
               <Card>
@@ -751,7 +753,7 @@ export default function StravaIntelligence() {
             {/* Recent activities */}
             <Card>
               <CardHeader title="Atividades Recentes"/>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 80px 70px 70px 80px 60px", gap:8, padding:"8px 16px", borderBottom:`1px solid rgba(255,255,255,.04)` }}>
+              <div className="act-table-header">
                 {["Atividade","Dist","Tempo","Pace","FC","Elev"].map(h=>(
                   <span key={h} style={{ fontSize:9, color:"rgba(255,255,255,.22)", fontWeight:700, letterSpacing:".09em", textTransform:"uppercase" }}>{h}</span>
                 ))}
@@ -764,7 +766,7 @@ export default function StravaIntelligence() {
         {/* ══ TRAINING LOAD ══════════════════════════════════════════════════════ */}
         {tab === "load" && (
           <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:10 }}>
+            <div className="kpi-grid">
               <Stat icon="🔵" label="CTL · Fitness crónico"  value={latest.ctl.toFixed(1)} sub="Média ponderada 42 dias"/>
               <Stat icon="🟠" label="ATL · Fadiga aguda"     value={latest.atl.toFixed(1)} sub="Média ponderada 7 dias"/>
               <Stat icon="🟢" label="TSB · Forma"            value={`${latest.tsb>0?"+":""}${latest.tsb.toFixed(1)}`} accent={latest.tsb>2} sub={latest.tsb>5?"Pronto para competir":latest.tsb<-12?"Cuidado: sobrecarga":"Equilíbrio de treino"}/>
@@ -803,7 +805,7 @@ export default function StravaIntelligence() {
               </div>
             </Card>
             {/* HR zones */}
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+            <div className="load-two-col">
               <Card>
                 <CardHeader title="Distribuição por zonas FC" sub="Zonas Garmin de António"/>
                 <div style={{ padding:"16px 8px 12px" }}>
@@ -888,7 +890,7 @@ export default function StravaIntelligence() {
                 </ResponsiveContainer>
               </div>
             </Card>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+            <div className="volume-two-col">
               <Card>
                 <CardHeader title="Volume mensal (km)"/>
                 <div style={{ padding:"12px 8px 12px" }}>
@@ -998,7 +1000,7 @@ export default function StravaIntelligence() {
         {/* ══ RECORDES / PRs ════════════════════════════════════════════════════ */}
         {tab === "prs" && (
           <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:14 }}>
+            <div className="pr-grid">
               {prs.map(pr => <PRCard key={pr.label} pr={pr}/>)}
             </div>
             {/* Race pace comparison */}
@@ -1025,7 +1027,7 @@ export default function StravaIntelligence() {
             {/* Top 10 races */}
             <Card>
               <CardHeader title="Melhores corridas por distância"/>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 80px 70px 70px 80px 60px", gap:8, padding:"8px 16px", borderBottom:`1px solid rgba(255,255,255,.04)` }}>
+              <div className="race-table-header">
                 {["Corrida","Dist","Tempo","Pace","FC","Data"].map(h=>(
                   <span key={h} style={{ fontSize:9,color:"rgba(255,255,255,.22)",fontWeight:700,letterSpacing:".09em",textTransform:"uppercase" }}>{h}</span>
                 ))}
@@ -1038,7 +1040,7 @@ export default function StravaIntelligence() {
         {/* ══ HEATMAP ════════════════════════════════════════════════════════════ */}
         {tab === "heatmap" && (
           <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:10 }}>
+            <div className="heatmap-stats">
               <Stat icon="📅" label="Dias ativos (90d)" value={new Set(activities.map(a=>a.start_date.slice(0,10))).size}/>
               <Stat icon="🔥" label="Streak atual" accent value={(() => {
                 let s=0; const today=new Date();
@@ -1085,7 +1087,7 @@ export default function StravaIntelligence() {
                   runs.forEach(r=>{ const i=new Date(r.start_date).getDay(); counts[i]++; km[i]+=r.distance/1000; });
                   const maxC=Math.max(...counts,1);
                   return (
-                    <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:10 }}>
+                    <div className="dow-grid">
                       {days.map((d,i)=>(
                         <div key={d} style={{ textAlign:"center" }}>
                           <div style={{ fontSize:11,color:"rgba(255,255,255,.45)",marginBottom:8,fontWeight:600 }}>{d}</div>
@@ -1110,7 +1112,7 @@ export default function StravaIntelligence() {
                   const counts=slots.map(s=>runs.filter(r=>{const h=new Date(r.start_date).getHours();return h>=s.range[0]&&h<s.range[1];}).length);
                   const maxC=Math.max(...counts,1);
                   return (
-                    <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12 }}>
+                    <div className="tod-grid">
                       {slots.map((s,i)=>(
                         <div key={i} style={{ textAlign:"center" }}>
                           <div style={{ fontSize:10,color:"rgba(255,255,255,.4)",marginBottom:10,lineHeight:1.4,whiteSpace:"pre-line" }}>{s.label}</div>
@@ -1130,11 +1132,11 @@ export default function StravaIntelligence() {
 
         {/* ══ AI COACH ══════════════════════════════════════════════════════════ */}
         {tab === "coach" && athlete && (
-          <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
-            <div style={{ display:"grid", gridTemplateColumns:"260px 1fr", gap:14 }}>
+          <div className="col-gap-18">
+            <div className="coach-top">
               <TSBGauge tsb={latest.tsb} ctl={latest.ctl} atl={latest.atl}/>
               <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                <div className="coach-stats-grid">
                   <Stat small icon="📈" label="Tendência CTL" value={tsbData.length>8?(latest.ctl>tsbData[tsbData.length-8]?.ctl?"↑ A melhorar":"↓ A descer"):"—"} sub="vs semana anterior"/>
                   <Stat small icon="🏃" label="Volume última semana" value={`${weeklyData[weeklyData.length-1]?.km?.toFixed(0)||0}km`}/>
                   <Stat small icon="🏆" label="PR mais recente" value={prs.find(p=>p.pr)?.label||"—"} sub={prs.find(p=>p.pr)?.pr}/>
