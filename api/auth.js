@@ -1,9 +1,15 @@
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
+  // CORS para desenvolvimento local
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.status(200).end();
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Método não permitido" });
   }
 
-  const { code } = req.body;
+  const { code } = req.body || {};
   if (!code) {
     return res.status(400).json({ error: "Código de autorização em falta" });
   }
@@ -13,7 +19,8 @@ export default async function handler(req, res) {
 
   if (!clientId || !clientSecret) {
     return res.status(500).json({
-      error: "Variáveis de ambiente não configuradas (VITE_STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET)",
+      error: "Variáveis de ambiente não configuradas",
+      missing: [!clientId && "VITE_STRAVA_CLIENT_ID", !clientSecret && "STRAVA_CLIENT_SECRET"].filter(Boolean),
     });
   }
 
@@ -32,7 +39,6 @@ export default async function handler(req, res) {
     const data = await stravaRes.json();
 
     if (data.access_token) {
-      // Devolve apenas o necessário — nunca expor o refresh_token ao cliente
       return res.status(200).json({
         access_token: data.access_token,
         athlete:      data.athlete,
@@ -41,10 +47,10 @@ export default async function handler(req, res) {
     } else {
       return res.status(400).json({
         error:   "Falha na autenticação com o Strava",
-        details: data.message || data,
+        details: data.message || JSON.stringify(data),
       });
     }
   } catch (err) {
-    return res.status(500).json({ error: "Erro interno do servidor" });
+    return res.status(500).json({ error: "Erro interno: " + err.message });
   }
-}
+};

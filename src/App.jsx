@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import React from "react";
 import "./index.css";
 import "./App.css";
 import {
@@ -125,7 +126,17 @@ function getWeeklyData(acts) {
     weeks[key].time += a.moving_time;
     weeks[key].elev += a.total_elevation_gain||0;
   });
-  return Object.values(weeks).slice(-16).map(w => ({ ...w, km: +w.km.toFixed(1), elev: +w.elev.toFixed(0) }));
+  // Garante que a semana actual existe mesmo sem corridas
+  const now = new Date();
+  const monNow = new Date(now); monNow.setDate(now.getDate() - ((now.getDay()+6)%7));
+  const curKey = monNow.toISOString().slice(0,10);
+  if (!weeks[curKey]) weeks[curKey] = { week: curKey.slice(5), km:0, runs:0, time:0, elev:0 };
+
+  // Ordena cronologicamente (mais antigo → mais recente) e pega as últimas 16 semanas
+  return Object.entries(weeks)
+    .sort(([a],[b]) => a.localeCompare(b))
+    .slice(-16)
+    .map(([,w]) => ({ ...w, km: +w.km.toFixed(1), elev: +w.elev.toFixed(0) }));
 }
 
 function getMonthlyData(acts) {
@@ -196,11 +207,38 @@ function Card({ children, style = {} }) {
   return <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, ...style }}>{children}</div>;
 }
 
-function CardHeader({ title, sub }) {
+function InfoIcon({ text }) {
+  const [show, setShow] = React.useState(false);
   return (
-    <div style={{ padding: "16px 20px 0" }}>
-      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.muted }}>{title}</div>
-      {sub && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", marginTop: 2 }}>{sub}</div>}
+    <div style={{ position:"relative", display:"inline-flex", alignItems:"center" }}
+      onMouseEnter={()=>setShow(true)} onMouseLeave={()=>setShow(false)}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.22)" strokeWidth="2" style={{cursor:"help",flexShrink:0}}>
+        <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+      </svg>
+      {show && (
+        <div style={{
+          position:"absolute", bottom:"calc(100% + 8px)", left:"50%", transform:"translateX(-50%)",
+          background:"#1a1a2e", border:"1px solid rgba(255,255,255,.12)", borderRadius:9,
+          padding:"8px 12px", fontSize:11, color:"rgba(255,255,255,.65)", lineHeight:1.55,
+          whiteSpace:"pre-wrap", minWidth:180, maxWidth:260, zIndex:99,
+          boxShadow:"0 8px 24px rgba(0,0,0,.5)",
+          pointerEvents:"none",
+        }}>
+          {text}
+          <div style={{ position:"absolute", top:"100%", left:"50%", transform:"translateX(-50%)",
+            borderLeft:"5px solid transparent", borderRight:"5px solid transparent",
+            borderTop:"5px solid rgba(255,255,255,.12)" }}/>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CardHeader({ title, info }) {
+  return (
+    <div style={{ padding:"16px 20px 0", display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
+      <div style={{ fontSize:11, fontWeight:500, letterSpacing:"0.04em", color:"rgba(255,255,255,.5)", textTransform:"uppercase" }}>{title}</div>
+      {info && <InfoIcon text={info}/>}
     </div>
   );
 }
@@ -243,7 +281,10 @@ function TSBGauge({ tsb, ctl, atl }) {
     : tsb <  15 ? { status:"Fresco",      color:"#66bb6a", emoji:"🟢" }
     :             { status:"Descansado",  color:"#4fc3f7", emoji:"🔵" };
   return (
-    <Card style={{ padding: 22, textAlign:"center" }}>
+    <Card style={{ padding: 22, textAlign:"center", position:"relative" }}>
+      <div style={{ position:"absolute", top:12, right:14 }}>
+        <InfoIcon text={"TSB (Training Stress Balance) = CTL − ATL.\n> +15: descansado (possível perda de fitness)\n+5 a +15: zona de forma óptima — ideal para competir\n−5 a +5: neutro\n< −15: overreaching — risco de lesão"}/>
+      </div>
       <div style={{ fontSize:10, letterSpacing:"0.12em", textTransform:"uppercase", color:C.muted, marginBottom:10 }}>Estado de Forma · TSB</div>
       <div style={{ fontSize:54, fontWeight:900, fontFamily:"'Barlow Condensed',sans-serif", color, lineHeight:1 }}>{tsb>0?"+":""}{tsb.toFixed(1)}</div>
       <div style={{ fontSize:14, fontWeight:700, color, marginTop:6 }}>{emoji} {status}</div>
@@ -270,13 +311,19 @@ function HeatMap({ activities }) {
   activities.forEach(a => { const d = a.start_date.slice(0,10); byDay[d] = (byDay[d]||0) + a.distance/1000; });
   const weeks = [];
   const today = new Date(); today.setHours(0,0,0,0);
-  const start = new Date(today); start.setDate(today.getDate()-363); start.setDate(start.getDate()-start.getDay());
+  // Recua até à segunda-feira mais próxima (0=Dom,1=Seg,...,6=Sab → offset para segunda)
+  const start = new Date(today);
+  start.setDate(today.getDate() - 363);
+  const dow = start.getDay(); // 0=Dom
+  const offsetToMonday = dow === 0 ? 1 : dow === 1 ? 0 : -(dow - 1);
+  start.setDate(start.getDate() + offsetToMonday);
+  const DOW_LABELS = ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"];
   for (let w=0; w<52; w++) {
     const week = [];
     for (let d=0; d<7; d++) {
       const dt = new Date(start); dt.setDate(start.getDate()+w*7+d);
       const key = dt.toISOString().slice(0,10);
-      week.push({ date:key, km: byDay[key]||0, future: dt>today });
+      week.push({ date:key, km: byDay[key]||0, future: dt>today, dow: DOW_LABELS[d] });
     }
     weeks.push(week);
   }
@@ -463,13 +510,18 @@ function PRCard({ pr }) {
     <div style={{
       background: pr.pr ? "rgba(255,255,255,.04)" : "rgba(255,255,255,.02)",
       border: pr.pr ? `1px solid rgba(252,76,2,.25)` : `1px solid ${C.border}`,
-      borderRadius: 14, padding: "18px 20px",
-      transition: "transform .18s, box-shadow .18s", cursor: pr.pr ? "default" : "default",
+      borderRadius: 14, padding: "18px 20px", position:"relative",
+      transition: "transform .18s, box-shadow .18s",
     }}
     onMouseEnter={e=>{ if(pr.pr){e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 8px 28px rgba(252,76,2,.18)";} }}
     onMouseLeave={e=>{e.currentTarget.style.transform="";e.currentTarget.style.boxShadow="";}}>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
-        <span style={{ fontSize:11, fontWeight:700, letterSpacing:"0.1em", textTransform:"uppercase", color:C.muted }}>{pr.label}</span>
+      <div style={{ position:"absolute", top:12, right:14 }}>
+        <InfoIcon text={pr.pr
+          ? `Melhor resultado em ${pr.label}.\nPace: ${pr.pace}/km · FC: ${pr.hr||"—"}bpm\nBaseado em ${pr.count} corrida${pr.count!==1?"s":""} nesta distância nas últimas 300 atividades.`
+          : `Sem corridas registadas na distância ${pr.label} nas últimas 300 atividades carregadas.`}/>
+      </div>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10, paddingRight:20 }}>
+        <span style={{ fontSize:11, fontWeight:500, letterSpacing:"0.06em", textTransform:"uppercase", color:C.muted }}>{pr.label}</span>
         {pr.pr && <span style={{ fontSize:10, background:"rgba(252,76,2,.15)", color:"#FC4C02", borderRadius:4, padding:"2px 8px", fontWeight:700 }}>PR</span>}
       </div>
       {pr.pr ? (
@@ -533,10 +585,8 @@ export default function StravaIntelligence() {
     (async () => {
       setLoading(true);
       try {
-        const [ath, stats] = await Promise.all([
-          fetch("https://www.strava.com/api/v3/athlete",            { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.json()),
-          fetch("https://www.strava.com/api/v3/athletes/me/stats",  { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.json()),
-        ]);
+        const ath = await fetch("https://www.strava.com/api/v3/athlete", { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.json());
+        const stats = await fetch(`https://www.strava.com/api/v3/athletes/${ath.id}/stats`, { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.json());
         ath.stats = stats; setAthlete(ath);
         const pages = await Promise.all([1,2,3].map(p =>
           fetch(`https://www.strava.com/api/v3/athlete/activities?per_page=100&page=${p}`,
@@ -582,13 +632,13 @@ export default function StravaIntelligence() {
   const scatterData = paceTrend.map(r => ({ x: r.dist, y: r.pace, hr: r.hr }));
 
   const tabs = [
-    { id:"overview", label:"Visão Geral",    icon:"⚡" },
-    { id:"load",     label:"Training Load",  icon:"📈" },
-    { id:"volume",   label:"Volume",         icon:"📊" },
-    { id:"pace",     label:"Pace & FC",      icon:"❤️" },
-    { id:"prs",      label:"Recordes",       icon:"🏆" },
-    { id:"heatmap",  label:"Mapa de Calor",  icon:"🗓️" },
-    { id:"coach",    label:"AI Coach",       icon:"🤖" },
+    { id:"overview", label:"Visão Geral",   icon:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>, color:"#FC4C02" },
+    { id:"load",     label:"Training Load", icon:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>, color:"#ff7043" },
+    { id:"volume",   label:"Volume",        icon:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="14" width="4" height="7" rx="1"/><rect x="9" y="9" width="4" height="12" rx="1"/><rect x="16" y="4" width="4" height="17" rx="1"/></svg>, color:"#42a5f5" },
+    { id:"pace",     label:"Pace & FC",     icon:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>, color:"#ef5350" },
+    { id:"prs",      label:"Recordes",      icon:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>, color:"#ffd54f" },
+    { id:"heatmap",  label:"Mapa de Calor", icon:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>, color:"#66bb6a" },
+    { id:"coach",    label:"AI Coach",      icon:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/><path d="M20 2v4h4"/></svg>, color:"#ab47bc" },
   ];
 
   // ─── LOGIN SCREEN ──────────────────────────────────────────────────────────
@@ -600,17 +650,16 @@ export default function StravaIntelligence() {
 
           {/* Logo */}
           <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:14, marginBottom:40 }}>
-            <div style={{ width:56, height:56, borderRadius:16, background:"linear-gradient(135deg,#FC4C02,#c93700)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28 }}>🏃</div>
+            <div style={{ width:56, height:56, borderRadius:16, background:"linear-gradient(135deg,#FC4C02,#c93700)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:26 }}>⚡</div>
             <div style={{ textAlign:"left" }}>
-              <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:36, fontWeight:900, letterSpacing:"-1px", color:"#fff", lineHeight:1 }}>
-                STRAVA<span style={{color:"#FC4C02"}}>.</span>INTEL
+              <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontSize:36, fontWeight:700, letterSpacing:"0px", color:"#fff", lineHeight:1 }}>
+                STRAVA <span style={{color:"#FC4C02", fontWeight:300}}>⚡</span>LAB
               </div>
               <div style={{ fontSize:12, color:C.muted, letterSpacing:"0.08em" }}>TRAINING INTELLIGENCE DASHBOARD</div>
             </div>
           </div>
 
           <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-            {/* Botão oficial Strava — só aparece se o Client ID estiver configurado */}
             {STRAVA_CLIENT_ID && STRAVA_CLIENT_ID !== "SEU_CLIENT_ID"
               ? <a href={STRAVA_AUTH_URL}
                   style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:12, background:"#FC4C02", color:"#fff", textDecoration:"none", borderRadius:12, padding:"15px 24px", fontWeight:700, fontSize:15, transition:"filter .2s" }}
@@ -628,14 +677,6 @@ export default function StravaIntelligence() {
                   Na Vercel, define a variável de ambiente <code>STRAVA_CLIENT_SECRET</code>.
                 </div>
             }
-
-            {/* Demo */}
-            <button onClick={loadMock}
-              style={{ background:"rgba(255,255,255,.05)", border:`1px solid ${C.border}`, borderRadius:12, padding:"13px 24px", color:"rgba(255,255,255,.65)", fontWeight:600, fontSize:14, cursor:"pointer", transition:"background .18s" }}
-              onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,.09)"}
-              onMouseLeave={e=>e.currentTarget.style.background="rgba(255,255,255,.05)"}>
-              👁️ Ver demo com dados simulados
-            </button>
           </div>
 
           {error && (
@@ -674,9 +715,9 @@ export default function StravaIntelligence() {
       <header className="app-header">
         <div className="app-header-inner">
           <div className="app-logo">
-            <span style={{ fontSize:20 }}>🏃</span>
+            <span style={{ fontSize:18 }}>⚡</span>
             <span className="app-logo-text">
-              STRAVA<span style={{color:"#FC4C02"}}>.</span>INTEL
+              STRAVA <span style={{color:"#FC4C02", fontWeight:300}}>⚡</span>LAB
             </span>
             {useMock && <span style={{ fontSize:10, background:"rgba(255,183,0,.12)", color:"#ffb300", border:"1px solid rgba(255,183,0,.25)", borderRadius:4, padding:"2px 8px", letterSpacing:".06em", flexShrink:0 }}>DEMO</span>}
           </div>
@@ -691,8 +732,10 @@ export default function StravaIntelligence() {
       <nav className="tab-bar">
         <div className="tab-bar-inner">
           {tabs.map(t => (
-            <button key={t.id} onClick={()=>setTab(t.id)} className={`tab-btn${tab===t.id?" active":""}`}>
-              <span className="tab-icon">{t.icon}</span>
+            <button key={t.id} onClick={()=>setTab(t.id)}
+              className={`tab-btn${tab===t.id?" active":""}`}
+              style={tab===t.id ? { color:t.color, borderBottomColor:t.color } : {}}>
+              <span className="tab-icon" style={tab===t.id?{color:t.color}:{}}>{t.icon}</span>
               <span className="tab-label">{t.label}</span>
             </button>
           ))}
@@ -705,22 +748,104 @@ export default function StravaIntelligence() {
         {/* ══ OVERVIEW ══════════════════════════════════════════════════════════ */}
         {tab === "overview" && (
           <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
-            {/* KPI row */}
-            <div className="kpi-grid">
-              <Stat icon="🏅" label="Corridas (90d)"      value={runs.length}                      accent/>
-              <Stat icon="📏" label="Distância total"     value={fmtDist(runs.reduce((s,r)=>s+r.distance,0))}/>
-              <Stat icon="⏱️" label="Tempo total"         value={fmtTime(runs.reduce((s,r)=>s+r.moving_time,0))}/>
-              <Stat icon="⛰️" label="Elevação total"      value={`${Math.round(runs.reduce((s,r)=>s+(r.total_elevation_gain||0),0))}m`}/>
-              <Stat icon="❤️" label="FC média"            value={`${Math.round(runs.filter(r=>r.average_heartrate).reduce((s,r)=>s+r.average_heartrate,0)/(runs.filter(r=>r.average_heartrate).length||1))}bpm`}/>
-              <Stat icon="🚀" label="Pace médio (10)"     value={fmtPace(runs.slice(0,10).filter(r=>r.average_speed>0).reduce((s,r)=>s+1000/r.average_speed,0)/(runs.slice(0,10).filter(r=>r.average_speed>0).length||1))} sub="/km"/>
-            </div>
+
+            {/* ── Totais ano atual em destaque ── */}
+            {(() => {
+              const thisYear = new Date().getFullYear();
+              const lastYear = thisYear - 1;
+              const yearRuns = runs.filter(r => new Date(r.start_date).getFullYear() === thisYear);
+              const prevRuns = runs.filter(r => new Date(r.start_date).getFullYear() === lastYear);
+              const stats = [
+                {
+                  label: "Corridas", icon:"🏅",
+                  info: `Corridas registadas no Strava em ${thisYear} vs ${lastYear}.`,
+                  year:  yearRuns.length,
+                  prev:  prevRuns.length,
+                  fmt:   v => v,
+                },
+                {
+                  label: "Distância", icon:"📏",
+                  info: `Distância total em ${thisYear} vs ${lastYear}. Baseado nas últimas 300 atividades carregadas.`,
+                  year:  yearRuns.reduce((s,r)=>s+r.distance,0),
+                  prev:  prevRuns.reduce((s,r)=>s+r.distance,0),
+                  fmt:   v => fmtDist(v),
+                },
+                {
+                  label: "Tempo", icon:"⏱️",
+                  info: `Tempo em movimento em ${thisYear} vs ${lastYear}.`,
+                  year:  yearRuns.reduce((s,r)=>s+r.moving_time,0),
+                  prev:  prevRuns.reduce((s,r)=>s+r.moving_time,0),
+                  fmt:   v => fmtTime(v),
+                },
+                {
+                  label: "Elevação", icon:"⛰️",
+                  info: `Elevação acumulada em ${thisYear} vs ${lastYear}.`,
+                  year:  yearRuns.reduce((s,r)=>s+(r.total_elevation_gain||0),0),
+                  prev:  prevRuns.reduce((s,r)=>s+(r.total_elevation_gain||0),0),
+                  fmt:   v => `${Math.round(v)}m`,
+                },
+                {
+                  label: "FC Média", icon:"❤️",
+                  info: `FC média de todas as corridas com dados de FC em ${thisYear}. Zonas Garmin: Z1≤108 Z2≤133 Z3≤152 Z4≤167 Z5≥168.`,
+                  year:  Math.round(yearRuns.filter(r=>r.average_heartrate).reduce((s,r)=>s+r.average_heartrate,0)/(yearRuns.filter(r=>r.average_heartrate).length||1)),
+                  prev:  Math.round(prevRuns.filter(r=>r.average_heartrate).reduce((s,r)=>s+r.average_heartrate,0)/(prevRuns.filter(r=>r.average_heartrate).length||1)),
+                  fmt:   v => `${v||"—"}${v?"bpm":""}`,
+                  noBar: true,
+                },
+              ];
+              return (
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }}>
+                  {stats.map(s => {
+                    const pct  = s.noBar ? null : Math.min(100, Math.round((s.year / (s.prev||1)) * 100));
+                    const diff = s.noBar ? null : s.prev ? ((s.year - s.prev) / s.prev * 100).toFixed(0) : null;
+                    const up   = diff > 0;
+                    return (
+                      <div key={s.label} style={{ background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.07)", borderRadius:14, padding:"16px 18px", display:"flex", flexDirection:"column", gap:4, position:"relative" }}>
+                        {/* Info tooltip */}
+                        <div style={{ position:"absolute", top:10, right:12 }} title={s.info}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.25)" strokeWidth="2" style={{cursor:"help"}}>
+                            <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+                          </svg>
+                        </div>
+                        <div style={{ fontSize:10, color:"rgba(255,255,255,.35)", fontWeight:700, letterSpacing:".08em", textTransform:"uppercase", marginBottom:2 }}>
+                          {s.icon} {s.label}
+                        </div>
+                        {/* Ano actual — destaque */}
+                        <div style={{ fontSize:28, fontWeight:900, fontFamily:"'Barlow Condensed',sans-serif", color:"#FC4C02", lineHeight:1 }}>
+                          {s.fmt(s.year)}
+                        </div>
+                        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                          <span style={{ fontSize:10, color:"rgba(252,76,2,.6)", fontWeight:600, letterSpacing:".04em" }}>{thisYear}</span>
+                          {diff !== null && (
+                            <span style={{ fontSize:10, fontWeight:700, color: up?"#66bb6a":"#ef5350" }}>
+                              {up?"↑":"↓"}{Math.abs(diff)}%
+                            </span>
+                          )}
+                        </div>
+                        {/* Barra comparativa */}
+                        {pct !== null && (
+                          <div style={{ margin:"6px 0 4px", height:3, background:"rgba(255,255,255,.07)", borderRadius:2, overflow:"hidden" }}>
+                            <div style={{ width:`${Math.min(pct,100)}%`, height:"100%", background: pct>=100?"#66bb6a":"#FC4C02", borderRadius:2 }}/>
+                          </div>
+                        )}
+                        {/* Ano anterior */}
+                        <div style={{ fontSize:11, color:"rgba(255,255,255,.3)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                          <span>{lastYear}: <strong style={{color:"rgba(255,255,255,.45)"}}>{s.fmt(s.prev)}</strong></span>
+                          {pct !== null && <span style={{ fontSize:10, color:"rgba(255,255,255,.2)" }}>{pct}%</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             {/* TSB + Radar */}
             <div className="overview-charts" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:14 }}>
               <TSBGauge tsb={latest.tsb} ctl={latest.ctl} atl={latest.atl}/>
               {/* CTL/ATL/TSB mini chart */}
               <Card>
-                <CardHeader title="CTL / ATL / TSB · 8 semanas"/>
+                <CardHeader title="CTL / ATL / TSB · 8 semanas" info={"CTL (Fitness Crónico): média ponderada a 42 dias do treino.\nATL (Fadiga Aguda): média ponderada a 7 dias.\nTSB (Forma): CTL − ATL. Positivo = fresco, negativo = cansado."}/>
                 <div style={{ padding:"12px 8px 8px" }}>
                   <ResponsiveContainer width="100%" height={170}>
                     <LineChart data={tsbData.slice(-28)}>
@@ -736,7 +861,7 @@ export default function StravaIntelligence() {
               </Card>
               {/* Radar */}
               <Card>
-                <CardHeader title="Performance Radar"/>
+                <CardHeader title="Performance Radar" info={"Comparação normalizada de 5 dimensões:\nPace (velocidade média), Volume (km totais), FC Baixa (eficiência aeróbica), Elevação e Frescura (TSB actual)."}/>
                 <div style={{ padding:"8px" }}>
                   <ResponsiveContainer width="100%" height={180}>
                     <RadarChart data={radarData}>
@@ -752,7 +877,7 @@ export default function StravaIntelligence() {
 
             {/* Recent activities */}
             <Card>
-              <CardHeader title="Atividades Recentes"/>
+              <CardHeader title="Atividades Recentes" info={"Últimas 16 atividades registadas no Strava.\nPR = Personal Record nessa distância.\nZonas de FC baseadas nas configurações Garmin."}/>
               <div className="act-table-header">
                 {["Atividade","Dist","Tempo","Pace","FC","Elev"].map(h=>(
                   <span key={h} style={{ fontSize:9, color:"rgba(255,255,255,.22)", fontWeight:700, letterSpacing:".09em", textTransform:"uppercase" }}>{h}</span>
@@ -767,13 +892,34 @@ export default function StravaIntelligence() {
         {tab === "load" && (
           <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
             <div className="kpi-grid">
-              <Stat icon="🔵" label="CTL · Fitness crónico"  value={latest.ctl.toFixed(1)} sub="Média ponderada 42 dias"/>
-              <Stat icon="🟠" label="ATL · Fadiga aguda"     value={latest.atl.toFixed(1)} sub="Média ponderada 7 dias"/>
-              <Stat icon="🟢" label="TSB · Forma"            value={`${latest.tsb>0?"+":""}${latest.tsb.toFixed(1)}`} accent={latest.tsb>2} sub={latest.tsb>5?"Pronto para competir":latest.tsb<-12?"Cuidado: sobrecarga":"Equilíbrio de treino"}/>
+              {[
+                { icon:"🔵", label:"CTL · Fitness crónico",  value:latest.ctl.toFixed(1), sub:"Média ponderada 42 dias",
+                  info:"Chronic Training Load: representa o teu nível de fitness acumulado.\nCalculado como média exponencial ponderada (constante de tempo 42 dias).\nValor mais alto = mais apto, mas também mais fatigado." },
+                { icon:"🟠", label:"ATL · Fadiga aguda",     value:latest.atl.toFixed(1), sub:"Média ponderada 7 dias",
+                  info:"Acute Training Load: representa a fadiga acumulada recentemente.\nCalculado com constante de tempo 7 dias.\nValor alto após semana intensa é normal — requer recuperação." },
+                { icon:"🟢", label:"TSB · Forma",
+                  value:`${latest.tsb>0?"+":""}${latest.tsb.toFixed(1)}`,
+                  accent:latest.tsb>2,
+                  sub:latest.tsb>5?"Pronto para competir":latest.tsb<-12?"Cuidado: sobrecarga":"Equilíbrio de treino",
+                  info:"Training Stress Balance = CTL − ATL.\nZona óptima de performance: +5 a +15.\nAbaixo de −15: overtraining. Acima de +20: possível destreino." },
+              ].map(s => (
+                <div key={s.label} style={{
+                  background: s.accent ? "linear-gradient(135deg,#FC4C02,#c93700)" : C.surface,
+                  border: s.accent ? "none" : `1px solid ${C.border}`,
+                  borderRadius:14, padding:"18px 22px", display:"flex", flexDirection:"column", gap:3,
+                  position:"relative",
+                }}>
+                  <div style={{ position:"absolute", top:10, right:12 }}><InfoIcon text={s.info}/></div>
+                  {s.icon && <span style={{ fontSize:18, marginBottom:2 }}>{s.icon}</span>}
+                  <span style={{ fontSize:26, fontWeight:800, fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:"-.5px", color: s.accent?"#fff":C.text }}>{s.value}</span>
+                  <span style={{ fontSize:10, fontWeight:500, letterSpacing:"0.07em", textTransform:"uppercase", color: s.accent?"rgba(255,255,255,.8)":C.muted }}>{s.label}</span>
+                  {s.sub && <span style={{ fontSize:11, color: s.accent?"rgba(255,255,255,.6)":"rgba(255,255,255,.3)", marginTop:1 }}>{s.sub}</span>}
+                </div>
+              ))}
             </div>
             {/* Full TSB chart */}
             <Card>
-              <CardHeader title="CTL / ATL / TSB — 55 dias" sub="CTL = fitness crónico (42d) · ATL = fadiga aguda (7d) · TSB = forma = CTL − ATL"/>
+              <CardHeader title="CTL / ATL / TSB — histórico" info={"CTL: fitness acumulado (decaimento 42 dias).\nATL: fadiga acumulada (decaimento 7 dias).\nTSB = CTL − ATL.\n+5 a +15: zona de forma óptima para competir.\n< −15: risco de overtraining."}/>
               <div style={{ padding:"16px 8px 12px" }}>
                 <ResponsiveContainer width="100%" height={260}>
                   <LineChart data={tsbData}>
@@ -791,7 +937,7 @@ export default function StravaIntelligence() {
             </Card>
             {/* Load bars */}
             <Card>
-              <CardHeader title="Carga diária de treino" sub="Suffer Score ou estimativa baseada em duração"/>
+              <CardHeader title="Carga diária de treino" info={"Estimativa de carga por sessão baseada no Suffer Score do Strava.\nSe não disponível, usa duração × fator de intensidade estimado pela FC."}/>
               <div style={{ padding:"16px 8px 12px" }}>
                 <ResponsiveContainer width="100%" height={160}>
                   <BarChart data={tsbData.slice(-28)}>
@@ -807,7 +953,7 @@ export default function StravaIntelligence() {
             {/* HR zones */}
             <div className="load-two-col">
               <Card>
-                <CardHeader title="Distribuição por zonas FC" sub="Zonas Garmin de António"/>
+                <CardHeader title="Distribuição por zonas FC" info={"Zonas Garmin configuradas:\nZ1 ≤108bpm · Z2 109-133 · Z3 134-152 · Z4 153-167 · Z5 ≥168\nÁrea abaixo de Z3 = treino aeróbico base (ideal: >80%)."}/>
                 <div style={{ padding:"16px 8px 12px" }}>
                   <ResponsiveContainer width="100%" height={180}>
                     <BarChart data={hrZoneData}>
@@ -830,7 +976,7 @@ export default function StravaIntelligence() {
                 </div>
               </Card>
               <Card>
-                <CardHeader title="Rácio Aeróbico vs Anaeróbico"/>
+                <CardHeader title="Rácio Aeróbico vs Anaeróbico" info={"Método 80/20: a evidência científica sugere que 80% do volume deve ser em Z1-Z2 e apenas 20% em Z4-Z5.\nRácio atual baseado na contagem de corridas por zona."}/>
                 <div style={{ padding:"20px 24px" }}>
                   {(() => {
                     const total = hrZoneData.reduce((s,z)=>s+z.count,0)||1;
@@ -868,16 +1014,75 @@ export default function StravaIntelligence() {
         {/* ══ VOLUME ═══════════════════════════════════════════════════════════ */}
         {tab === "volume" && (
           <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:10 }}>
-              <Stat icon="📅" label="Esta semana"     value={`${weeklyData[weeklyData.length-1]?.km?.toFixed(0)||0}km`}/>
-              <Stat icon="📆" label="Semana anterior" value={`${weeklyData[weeklyData.length-2]?.km?.toFixed(0)||0}km`}/>
-              <Stat icon="📊" label="Média semanal"   value={`${(weeklyData.reduce((s,w)=>s+w.km,0)/(weeklyData.length||1)).toFixed(0)}km`}/>
-              <Stat icon="🏆" label="Melhor semana"   value={`${Math.max(...weeklyData.map(w=>w.km),0).toFixed(0)}km`} accent/>
-              <Stat icon="📈" label="Total YTD"       value={fmtDist(athlete?.stats?.ytd_run_totals?.distance||0)}/>
-              <Stat icon="🌍" label="Total histórico" value={fmtDist(athlete?.stats?.all_run_totals?.distance||0)}/>
-            </div>
+            {/* KPI row com SVG icons */}
+            {(() => {
+              const lastWeek = weeklyData[weeklyData.length-2];
+              const thisWeek = weeklyData[weeklyData.length-1];
+              const avg = weeklyData.reduce((s,w)=>s+w.km,0)/(weeklyData.length||1);
+              const best = Math.max(...weeklyData.map(w=>w.km),0);
+              const svgProps = { width:18, height:18, viewBox:"0 0 24 24", fill:"none", stroke:"currentColor", strokeWidth:2 };
+              const kpis = [
+                {
+                  label:"Esta semana", value:`${thisWeek?.km?.toFixed(0)||0}km`,
+                  info:"Km de corrida acumulados desde segunda-feira desta semana.",
+                  icon:<svg {...svgProps}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+                  color:"#FC4C02",
+                },
+                {
+                  label:"Semana anterior", value:`${lastWeek?.km?.toFixed(0)||0}km`,
+                  info:"Km totais da semana passada (segunda a domingo).",
+                  icon:<svg {...svgProps}><polyline points="15 18 9 12 15 6"/></svg>,
+                  color:"#ffa726",
+                },
+                {
+                  label:"Média semanal", value:`${avg.toFixed(0)}km`,
+                  info:"Média de km por semana nas últimas 16 semanas com atividade.",
+                  icon:<svg {...svgProps}><line x1="4" y1="12" x2="20" y2="12"/><polyline points="9 7 4 12 9 17"/></svg>,
+                  color:"#42a5f5",
+                },
+                {
+                  label:"Melhor semana", value:`${best.toFixed(0)}km`,
+                  info:"Volume máximo numa só semana no histórico carregado (últimas 300 atividades).",
+                  icon:<svg {...svgProps}><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>,
+                  color:"#ffd54f",
+                  accent:true,
+                },
+                {
+                  label:"Total YTD", value:fmtDist(athlete?.stats?.ytd_run_totals?.distance||0),
+                  info:"Distância total de corrida no ano actual, segundo as estatísticas do Strava (inclui todas as atividades, não só as 300 carregadas).",
+                  icon:<svg {...svgProps}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+                  color:"#66bb6a",
+                },
+                {
+                  label:"Total histórico", value:fmtDist(athlete?.stats?.all_run_totals?.distance||0),
+                  info:"Distância total acumulada em toda a tua história no Strava.",
+                  icon:<svg {...svgProps}><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>,
+                  color:"#ab47bc",
+                },
+              ];
+              return (
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:10 }}>
+                  {kpis.map(k => (
+                    <div key={k.label} style={{
+                      background: k.accent ? "linear-gradient(135deg,#FC4C02,#c93700)" : C.surface,
+                      border: k.accent ? "none" : `1px solid ${C.border}`,
+                      borderRadius:14, padding:"16px 18px", display:"flex", flexDirection:"column", gap:5,
+                      position:"relative",
+                      transition:"transform .18s", cursor:"default",
+                    }}
+                    onMouseEnter={e=>e.currentTarget.style.transform="translateY(-2px)"}
+                    onMouseLeave={e=>e.currentTarget.style.transform=""}>
+                      <div style={{ position:"absolute", top:10, right:12 }}><InfoIcon text={k.info}/></div>
+                      <div style={{ color: k.accent?"rgba(255,255,255,.7)":k.color }}>{k.icon}</div>
+                      <div style={{ fontSize:24, fontWeight:800, fontFamily:"'Barlow Condensed',sans-serif", color: k.accent?"#fff":"#f0f0f0", lineHeight:1 }}>{k.value}</div>
+                      <div style={{ fontSize:10, fontWeight:500, letterSpacing:".06em", textTransform:"uppercase", color: k.accent?"rgba(255,255,255,.75)":"rgba(255,255,255,.4)" }}>{k.label}</div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
             <Card>
-              <CardHeader title="Volume semanal · 16 semanas" sub="km de corrida por semana"/>
+              <CardHeader title="Volume semanal · 16 semanas" info={"Quilómetros de corrida por semana civil (segunda a domingo).\nA semana começa na segunda-feira."}/>
               <div style={{ padding:"16px 8px 12px" }}>
                 <ResponsiveContainer width="100%" height={220}>
                   <BarChart data={weeklyData}>
@@ -892,7 +1097,7 @@ export default function StravaIntelligence() {
             </Card>
             <div className="volume-two-col">
               <Card>
-                <CardHeader title="Volume mensal (km)"/>
+                <CardHeader title="Volume mensal" info={"Total de km de corrida por mês calendário.\nBaseado nas atividades carregadas (máx. 300)."}/>
                 <div style={{ padding:"12px 8px 12px" }}>
                   <ResponsiveContainer width="100%" height={180}>
                     <AreaChart data={monthlyData}>
@@ -905,7 +1110,7 @@ export default function StravaIntelligence() {
                 </div>
               </Card>
               <Card>
-                <CardHeader title="Corridas por semana"/>
+                <CardHeader title="Corridas por semana" info={"Número de sessões de corrida por semana.\nMeta habitual de corredores de competição: 5-7 sessões/semana."}/>
                 <div style={{ padding:"12px 8px 12px" }}>
                   <ResponsiveContainer width="100%" height={180}>
                     <BarChart data={weeklyData}>
@@ -919,7 +1124,7 @@ export default function StravaIntelligence() {
               </Card>
             </div>
             <Card>
-              <CardHeader title="Elevação acumulada semanal (m)"/>
+              <CardHeader title="Elevação acumulada semanal" info={"Ganho de elevação total por semana em metros.\nUtil para perceber semanas de carga montanha vs planície."}/>
               <div style={{ padding:"12px 8px 12px" }}>
                 <ResponsiveContainer width="100%" height={160}>
                   <AreaChart data={weeklyData}>
@@ -944,7 +1149,7 @@ export default function StravaIntelligence() {
               <Stat icon="📐" label="Eficiência aerób." value={paceTrend.length?`${(paceTrend.reduce((s,r)=>s+r.pace/r.hr,0)/paceTrend.length*100).toFixed(1)}`:"—"} sub="pace/bpm ×100"/>
             </div>
             <Card>
-              <CardHeader title="Evolução de pace" sub="seg/km por corrida · valores mais baixos = mais rápido"/>
+              <CardHeader title="Evolução de pace" info={"Pace médio (seg/km) das últimas 25 corridas.\nValores mais baixos = mais rápido.\nTendência descendente indica melhoria de desempenho."}/>
               <div style={{ padding:"16px 8px 12px" }}>
                 <ResponsiveContainer width="100%" height={200}>
                   <LineChart data={paceTrend}>
@@ -958,7 +1163,7 @@ export default function StravaIntelligence() {
               </div>
             </Card>
             <Card>
-              <CardHeader title="Frequência cardíaca por corrida" sub="FC média em bpm"/>
+              <CardHeader title="Frequência cardíaca por corrida" info={"FC média de cada corrida ao longo do tempo.\nFC estável com pace a melhorar = ganho de eficiência aeróbica."}/>
               <div style={{ padding:"16px 8px 12px" }}>
                 <ResponsiveContainer width="100%" height={180}>
                   <AreaChart data={paceTrend}>
@@ -972,7 +1177,7 @@ export default function StravaIntelligence() {
               </div>
             </Card>
             <Card>
-              <CardHeader title="Pace vs Distância" sub="Cada ponto = 1 corrida · verifica se pace sobe com distância"/>
+              <CardHeader title="Pace vs Distância" info={"Cada ponto = 1 corrida.\nEsperado: pace aumenta (mais lento) com a distância.\nPontos fora da tendência = corridas de qualidade ou muito fáceis."}/>
               <div style={{ padding:"16px 8px 12px" }}>
                 <ResponsiveContainer width="100%" height={180}>
                   <ScatterChart>
@@ -1005,7 +1210,7 @@ export default function StravaIntelligence() {
             </div>
             {/* Race pace comparison */}
             <Card>
-              <CardHeader title="Comparação de pace entre distâncias" sub="Pace médio dos teus melhores resultados"/>
+              <CardHeader title="Pace médio por distância" info={"Pace médio calculado a partir dos melhores resultados registados por intervalo de distância.\nPermite ver progressão entre distâncias de treino."}/>
               <div style={{ padding:"16px 8px 12px" }}>
                 <ResponsiveContainer width="100%" height={180}>
                   <BarChart data={prs.filter(p=>p.pace).map(p=>({ dist:p.label, pace:p.pace ? parseInt(p.pace.split(":")[0])*60+parseInt(p.pace.split(":")[1]) : null, label:p.pace }))}>
@@ -1026,7 +1231,7 @@ export default function StravaIntelligence() {
             </Card>
             {/* Top 10 races */}
             <Card>
-              <CardHeader title="Melhores corridas por distância"/>
+              <CardHeader title="Melhores corridas por distância" info={"Corridas com distância > 4km ordenadas por velocidade média.\nMostra as tuas corridas mais rápidas independentemente da distância."}/>
               <div className="race-table-header">
                 {["Corrida","Dist","Tempo","Pace","FC","Data"].map(h=>(
                   <span key={h} style={{ fontSize:9,color:"rgba(255,255,255,.22)",fontWeight:700,letterSpacing:".09em",textTransform:"uppercase" }}>{h}</span>
@@ -1056,14 +1261,14 @@ export default function StravaIntelligence() {
               <Stat icon="🌅" label="Corridas matinais (antes 9h)" value={runs.filter(r=>new Date(r.start_date).getHours()<9).length}/>
             </div>
             <Card>
-              <CardHeader title="Mapa de calor de treino · 12 meses" sub="Cada quadrado = 1 dia · cor = volume em km"/>
+              <CardHeader title="Mapa de calor · 12 meses" info={"Cada quadrado = 1 dia. Cor = volume em km nesse dia.\nSemanas começam na segunda-feira.\nPermite identificar padrões de consistência e períodos de descanso."}/>
               <div style={{ padding:"16px 20px 20px", overflowX:"auto" }}>
                 <HeatMap activities={activities}/>
               </div>
             </Card>
             {/* Monthly volume chart */}
             <Card>
-              <CardHeader title="Volume mensal (últimos 12 meses)"/>
+              <CardHeader title="Volume mensal · 12 meses" info={"Total de km de todas as atividades por mês.\nOs últimos 12 meses a contar de hoje."}/>
               <div style={{ padding:"12px 8px 12px" }}>
                 <ResponsiveContainer width="100%" height={180}>
                   <BarChart data={monthlyData}>
@@ -1078,14 +1283,21 @@ export default function StravaIntelligence() {
             </Card>
             {/* Day of week distribution */}
             <Card>
-              <CardHeader title="Distribuição por dia da semana"/>
+              <CardHeader title="Distribuição por dia da semana" info={"Frequência e volume de corridas por dia da semana.\nPermite identificar os dias preferidos de treino e distribuição da carga semanal."}/>
               <div style={{ padding:"20px 24px" }}>
                 {(() => {
-                  const days=["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
-                  const counts=new Array(7).fill(0);
-                  const km=new Array(7).fill(0);
-                  runs.forEach(r=>{ const i=new Date(r.start_date).getDay(); counts[i]++; km[i]+=r.distance/1000; });
-                  const maxC=Math.max(...counts,1);
+                  // Ordem Seg→Dom: getDay() devolve 0=Dom,1=Seg,...,6=Sáb
+                  // Remapeia para índice 0=Seg,...,6=Dom
+                  const days = ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"];
+                  const dayIndex = [1,2,3,4,5,6,0]; // getDay() correspondente a cada posição
+                  const counts = new Array(7).fill(0);
+                  const km     = new Array(7).fill(0);
+                  runs.forEach(r => {
+                    const dow = new Date(r.start_date).getDay(); // 0=Dom
+                    const pos = dayIndex.indexOf(dow);           // posição Seg-based
+                    if (pos !== -1) { counts[pos]++; km[pos] += r.distance/1000; }
+                  });
+                  const maxC = Math.max(...counts, 1);
                   return (
                     <div className="dow-grid">
                       {days.map((d,i)=>(
@@ -1105,7 +1317,7 @@ export default function StravaIntelligence() {
             </Card>
             {/* Time of day */}
             <Card>
-              <CardHeader title="Horário das corridas"/>
+              <CardHeader title="Horário das corridas" info={"Distribuição das sessões por período do dia.\nBaseado na hora de início registada no Strava (hora local)."}/>
               <div style={{ padding:"20px 24px" }}>
                 {(() => {
                   const slots=[{label:"Manhã cedo\n5h-8h",range:[5,8]},{label:"Manhã\n8h-12h",range:[8,12]},{label:"Tarde\n12h-17h",range:[12,17]},{label:"Final de tarde\n17h-20h",range:[17,20]},{label:"Noite\n20h-24h",range:[20,24]}];
