@@ -20,7 +20,7 @@ module.exports = async function handler(req, res) {
     const genAI = new GoogleGenerativeAI(apiKey);
     
     // Configuração do modelo e das instruções de sistema
-    const modelConfig = { model: "gemini-1.5-flash-002" };
+    const modelConfig = { model: "gemini-2.5-flash" };
     if (system) {
         modelConfig.systemInstruction = system;
     }
