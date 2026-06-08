@@ -154,14 +154,15 @@ function getMonthlyData(acts) {
 function getPRs(acts) {
   const runs = acts.filter(a => a.type === "Run" && a.distance > 0);
   const brackets = [
-    { label: "5K",   min: 4800,  max: 5500  },
-    { label: "10K",  min: 9500,  max: 10600 },
-    { label: "Meia", min: 20500, max: 22000 },
-    { label: "Maratona", min: 41000, max: 43500 },
+    { label: "5K",       min: 4500,  max: 6000  },
+    { label: "10K",      min: 9000,  max: 11000 },
+    { label: "Meia",     min: 19000, max: 23000 },
+    { label: "Maratona", min: 40000, max: 45000 },
   ];
   return brackets.map(b => {
     const candidates = runs.filter(r => r.distance >= b.min && r.distance <= b.max);
     if (!candidates.length) return { label: b.label, pr: null, pace: null, date: null, count: 0 };
+    // Best = fastest average speed (not race-only — includes training runs)
     const best = candidates.reduce((best, r) => (r.average_speed > best.average_speed ? r : best));
     return {
       label: b.label,
@@ -243,7 +244,8 @@ function CardHeader({ title, info }) {
   );
 }
 
-function Stat({ label, value, sub, accent, icon, small }) {
+function Stat({ label, value, sub, accent, icon, small, color }) {
+  const ac = color || "#00C4B4";
   return (
     <div style={{
       background: accent ? "linear-gradient(135deg,#FC4C02,#c93700)" : C.surface,
@@ -252,11 +254,11 @@ function Stat({ label, value, sub, accent, icon, small }) {
       display: "flex", flexDirection: "column", gap: 3,
       transition: "transform .18s,box-shadow .18s", cursor: "default",
     }}
-    onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 10px 32px rgba(252,76,2,.18)";}}
+    onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 10px 32px rgba(0,0,0,.25)";}}
     onMouseLeave={e=>{e.currentTarget.style.transform="";e.currentTarget.style.boxShadow="";}}>
       {icon && <span style={{ fontSize: 18, marginBottom: 2 }}>{icon}</span>}
-      <span style={{ fontSize: small ? 22 : 26, fontWeight: 800, fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:"-.5px", color: accent?"#fff":C.text }}>{value}</span>
-      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing:"0.09em", textTransform:"uppercase", color: accent?"rgba(255,255,255,.8)":C.muted }}>{label}</span>
+      <span style={{ fontSize: small ? 22 : 26, fontWeight: 700, fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:"-.5px", color: accent?"#fff":ac }}>{value}</span>
+      <span style={{ fontSize: 10, fontWeight: 500, letterSpacing:"0.06em", textTransform:"uppercase", color: accent?"rgba(255,255,255,.8)":C.muted }}>{label}</span>
       {sub && <span style={{ fontSize: 11, color: accent?"rgba(255,255,255,.6)":"rgba(255,255,255,.3)", marginTop: 1 }}>{sub}</span>}
     </div>
   );
@@ -373,15 +375,72 @@ function ActivityRow({ act }) {
         </div>
         <div style={{ fontSize:10, color:"rgba(255,255,255,.3)", marginTop:1 }}>{fmtDate(act.start_date)} · {act.type}</div>
       </div>
-      <span style={{ fontSize:12, color:"#FC4C02", fontWeight:700 }}>{fmtDist(act.distance)}</span>
+      <span style={{ fontSize:12, color:"#FC4C02", fontWeight:600 }}>{fmtDist(act.distance)}</span>
       <span className="act-col-time" style={{ fontSize:12, color:"rgba(255,255,255,.55)" }}>{fmtTime(act.moving_time)}</span>
       {act.type==="Run"
         ? <span style={{ fontSize:12, color:"rgba(255,255,255,.55)" }}>{fmtPace(pace)}/km</span>
         : <span style={{ fontSize:12, color:"rgba(255,255,255,.3)" }}>—</span>}
       {hrZ
-        ? <span style={{ fontSize:11, fontWeight:700, color:hrZ.color, background:`${hrZ.color}22`, borderRadius:4, padding:"2px 6px", textAlign:"center" }}>{hrZ.label} {Math.round(act.average_heartrate)}</span>
+        ? <span style={{ fontSize:11, fontWeight:600, color:hrZ.color, background:`${hrZ.color}22`, borderRadius:4, padding:"2px 6px", textAlign:"center" }}>{hrZ.label} {Math.round(act.average_heartrate)}</span>
         : <span/>}
       <span className="act-col-elev" style={{ fontSize:11, color:"rgba(255,255,255,.3)" }}>↑{Math.round(act.total_elevation_gain||0)}m</span>
+    </div>
+  );
+}
+
+// ─── ATHLETE STATUS PANEL ─────────────────────────────────────────────────────
+function AthleteStatus({ tsbData, activities, athlete }) {
+  const latest  = tsbData[tsbData.length-1] || {};
+  const runs    = activities.filter(a=>a.type==="Run");
+  const now     = new Date();
+  const monNow  = new Date(now); monNow.setDate(now.getDate()-((now.getDay()+6)%7));
+  const weekKm  = runs.filter(r=>new Date(r.start_date)>=monNow).reduce((s,r)=>s+r.distance/1000,0);
+  const lastWk  = (() => { const d=new Date(monNow); d.setDate(d.getDate()-7); return d; })();
+  const lastKm  = runs.filter(r=>{ const d=new Date(r.start_date); return d>=lastWk&&d<monNow; }).reduce((s,r)=>s+r.distance/1000,0);
+  const avgHR   = Math.round(runs.slice(0,10).filter(r=>r.average_heartrate).reduce((s,r)=>s+r.average_heartrate,0)/(runs.slice(0,10).filter(r=>r.average_heartrate).length||1));
+  const tsb     = latest.tsb || 0;
+  const ctl     = latest.ctl || 0;
+  const atl     = latest.atl || 0;
+
+  const form    = tsb > 10 ? { label:"Fresco", color:"#66bb6a", icon:"✅" }
+                : tsb > 2  ? { label:"Óptimo", color:"#00C4B4", icon:"🎯" }
+                : tsb > -5 ? { label:"Neutro",  color:"#ffa726", icon:"⚖️" }
+                : tsb > -15? { label:"Fatigado", color:"#FC4C02", icon:"⚠️" }
+                :             { label:"Overreaching", color:"#ef5350", icon:"🚨" };
+
+  const rec     = tsb > 8  ? "Dia ideal para corrida de qualidade ou prova."
+                : tsb > 2  ? "Boas condições para treino moderado a intenso."
+                : tsb > -5 ? "Mantém volume mas evita intensidade máxima."
+                : tsb > -15? "Prioriza recuperação. Corrida leve ou descanso."
+                :             "Descanso obrigatório. Risco elevado de lesão.";
+
+  const items = [
+    { label:"Forma (TSB)", value:`${tsb>0?"+":""}${tsb.toFixed(1)}`, color:form.color },
+    { label:"Fitness (CTL)", value:ctl.toFixed(1), color:"#00C4B4" },
+    { label:"Fadiga (ATL)", value:atl.toFixed(1), color:"#FC4C02" },
+    { label:"Esta semana", value:`${weekKm.toFixed(0)}km`, color:"#00C4B4" },
+    { label:"Semana anterior", value:`${lastKm.toFixed(0)}km`, color:"rgba(255,255,255,.5)" },
+    { label:"FC média (10 corr.)", value:`${avgHR}bpm`, color:"#ef5350" },
+  ];
+
+  return (
+    <div style={{ margin:"16px 20px 0", background:"rgba(255,255,255,.03)", border:`1px solid rgba(255,255,255,.07)`, borderRadius:12, padding:"16px 18px" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+        <span style={{ fontSize:16 }}>{form.icon}</span>
+        <span style={{ fontSize:12, fontWeight:600, color:form.color, letterSpacing:".04em", textTransform:"uppercase" }}>Estado actual: {form.label}</span>
+        <div style={{ marginLeft:"auto" }}><InfoIcon text={"Análise automática baseada nos dados actuais:\nTSB = CTL − ATL (Training Stress Balance)\nCTL = fitness crónico (42d) · ATL = fadiga aguda (7d)"}/></div>
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:8, marginBottom:12 }}>
+        {items.map(it=>(
+          <div key={it.label} style={{ textAlign:"center", background:"rgba(255,255,255,.03)", borderRadius:8, padding:"8px 10px" }}>
+            <div style={{ fontSize:16, fontWeight:700, fontFamily:"'Barlow Condensed',sans-serif", color:it.color }}>{it.value}</div>
+            <div style={{ fontSize:9, color:"rgba(255,255,255,.35)", textTransform:"uppercase", letterSpacing:".06em", marginTop:2 }}>{it.label}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize:12, color:"rgba(255,255,255,.5)", background:"rgba(255,255,255,.03)", borderRadius:8, padding:"8px 12px", borderLeft:`3px solid ${form.color}` }}>
+        💡 {rec}
+      </div>
     </div>
   );
 }
@@ -419,16 +478,15 @@ function AICoach({ activities, athlete, tsbData }) {
     setMessages(history);
     setLoading(true);
     try {
-      const r = await fetch("https://api.anthropic.com/v1/messages", {
+      const r = await fetch("/api/coach", {
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
-          model:"claude-sonnet-4-20250514", max_tokens:1000,
           system: SYSTEM,
           messages: history.map(m => ({ role:m.role, content:m.content }))
         })
       });
       const data = await r.json();
-      const reply = data.content?.[0]?.text || "Erro ao obter resposta.";
+      const reply = data.reply || data.error || "Erro ao obter resposta.";
       setMessages(prev => [...prev, { role:"assistant", content:reply }]);
     } catch { setMessages(prev => [...prev, { role:"assistant", content:"Erro de ligação." }]); }
     setLoading(false);
@@ -448,6 +506,9 @@ function AICoach({ activities, athlete, tsbData }) {
           </button>
         )}
       </div>
+
+      {/* Auto-analysis — estado actual do atleta */}
+      <AthleteStatus tsbData={tsbData} activities={activities} athlete={athlete}/>
 
       {/* Quick questions */}
       {messages.length === 0 && (
@@ -522,7 +583,7 @@ function PRCard({ pr }) {
       </div>
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10, paddingRight:20 }}>
         <span style={{ fontSize:11, fontWeight:500, letterSpacing:"0.06em", textTransform:"uppercase", color:C.muted }}>{pr.label}</span>
-        {pr.pr && <span style={{ fontSize:10, background:"rgba(252,76,2,.15)", color:"#FC4C02", borderRadius:4, padding:"2px 8px", fontWeight:700 }}>PR</span>}
+        {pr.pr && <span style={{ fontSize:10, background:"rgba(0,196,180,.12)", color:"#00C4B4", borderRadius:4, padding:"2px 8px", fontWeight:600 }}>Melhor tempo</span>}
       </div>
       {pr.pr ? (
         <>
@@ -637,7 +698,7 @@ export default function StravaIntelligence() {
     { id:"volume",   label:"Volume",        icon:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="14" width="4" height="7" rx="1"/><rect x="9" y="9" width="4" height="12" rx="1"/><rect x="16" y="4" width="4" height="17" rx="1"/></svg>, color:"#42a5f5" },
     { id:"pace",     label:"Pace & FC",     icon:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>, color:"#ef5350" },
     { id:"prs",      label:"Recordes",      icon:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>, color:"#ffd54f" },
-    { id:"heatmap",  label:"Mapa de Calor", icon:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>, color:"#66bb6a" },
+    { id:"heatmap",  label:"Mapa de Calor", icon:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="4" height="4" rx="1"/><rect x="10" y="3" width="4" height="4" rx="1"/><rect x="18" y="3" width="4" height="4" rx="1"/><rect x="2" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="18" y="10" width="4" height="4" rx="1"/><rect x="2" y="17" width="4" height="4" rx="1"/><rect x="10" y="17" width="4" height="4" rx="1"/><rect x="18" y="17" width="4" height="4" rx="1"/></svg>, color:"#66bb6a" },
     { id:"coach",    label:"AI Coach",      icon:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/><path d="M20 2v4h4"/></svg>, color:"#ab47bc" },
   ];
 
@@ -757,35 +818,45 @@ export default function StravaIntelligence() {
               const prevRuns = runs.filter(r => new Date(r.start_date).getFullYear() === lastYear);
               const stats = [
                 {
-                  label: "Corridas", icon:"🏅",
+                  label: "Corridas",
+                  icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="5" r="2"/><path d="M10.2 8.2L7 14h3l1 5h2l1-5h3l-3.2-5.8"/></svg>,
+                  color: "#00C4B4",
                   info: `Corridas registadas no Strava em ${thisYear} vs ${lastYear}.`,
                   year:  yearRuns.length,
                   prev:  prevRuns.length,
                   fmt:   v => v,
                 },
                 {
-                  label: "Distância", icon:"📏",
+                  label: "Distância",
+                  icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12h18M3 6l9-3 9 3M3 18l9 3 9-3"/></svg>,
+                  color: "#00C4B4",
                   info: `Distância total em ${thisYear} vs ${lastYear}. Baseado nas últimas 300 atividades carregadas.`,
                   year:  yearRuns.reduce((s,r)=>s+r.distance,0),
                   prev:  prevRuns.reduce((s,r)=>s+r.distance,0),
                   fmt:   v => fmtDist(v),
                 },
                 {
-                  label: "Tempo", icon:"⏱️",
+                  label: "Tempo",
+                  icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+                  color: "#00C4B4",
                   info: `Tempo em movimento em ${thisYear} vs ${lastYear}.`,
                   year:  yearRuns.reduce((s,r)=>s+r.moving_time,0),
                   prev:  prevRuns.reduce((s,r)=>s+r.moving_time,0),
                   fmt:   v => fmtTime(v),
                 },
                 {
-                  label: "Elevação", icon:"⛰️",
+                  label: "Elevação",
+                  icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 4 12 14 8 8 2 18"/></svg>,
+                  color: "#00C4B4",
                   info: `Elevação acumulada em ${thisYear} vs ${lastYear}.`,
                   year:  yearRuns.reduce((s,r)=>s+(r.total_elevation_gain||0),0),
                   prev:  prevRuns.reduce((s,r)=>s+(r.total_elevation_gain||0),0),
                   fmt:   v => `${Math.round(v)}m`,
                 },
                 {
-                  label: "FC Média", icon:"❤️",
+                  label: "FC Média",
+                  icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>,
+                  color: "#FC4C02",
                   info: `FC média de todas as corridas com dados de FC em ${thisYear}. Zonas Garmin: Z1≤108 Z2≤133 Z3≤152 Z4≤167 Z5≥168.`,
                   year:  Math.round(yearRuns.filter(r=>r.average_heartrate).reduce((s,r)=>s+r.average_heartrate,0)/(yearRuns.filter(r=>r.average_heartrate).length||1)),
                   prev:  Math.round(prevRuns.filter(r=>r.average_heartrate).reduce((s,r)=>s+r.average_heartrate,0)/(prevRuns.filter(r=>r.average_heartrate).length||1)),
@@ -799,39 +870,35 @@ export default function StravaIntelligence() {
                     const pct  = s.noBar ? null : Math.min(100, Math.round((s.year / (s.prev||1)) * 100));
                     const diff = s.noBar ? null : s.prev ? ((s.year - s.prev) / s.prev * 100).toFixed(0) : null;
                     const up   = diff > 0;
+                    const ac   = s.color || "#00C4B4";
                     return (
                       <div key={s.label} style={{ background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.07)", borderRadius:14, padding:"16px 18px", display:"flex", flexDirection:"column", gap:4, position:"relative" }}>
-                        {/* Info tooltip */}
-                        <div style={{ position:"absolute", top:10, right:12 }} title={s.info}>
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.25)" strokeWidth="2" style={{cursor:"help"}}>
-                            <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-                          </svg>
+                        <div style={{ position:"absolute", top:10, right:12 }}>
+                          <InfoIcon text={s.info}/>
                         </div>
-                        <div style={{ fontSize:10, color:"rgba(255,255,255,.35)", fontWeight:700, letterSpacing:".08em", textTransform:"uppercase", marginBottom:2 }}>
-                          {s.icon} {s.label}
+                        <div style={{ color:ac, marginBottom:2 }}>{s.icon}</div>
+                        <div style={{ fontSize:10, color:"rgba(255,255,255,.35)", fontWeight:500, letterSpacing:".06em", textTransform:"uppercase" }}>
+                          {s.label}
                         </div>
-                        {/* Ano actual — destaque */}
-                        <div style={{ fontSize:28, fontWeight:900, fontFamily:"'Barlow Condensed',sans-serif", color:"#FC4C02", lineHeight:1 }}>
+                        <div style={{ fontSize:28, fontWeight:700, fontFamily:"'Barlow Condensed',sans-serif", color:ac, lineHeight:1 }}>
                           {s.fmt(s.year)}
                         </div>
                         <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                          <span style={{ fontSize:10, color:"rgba(252,76,2,.6)", fontWeight:600, letterSpacing:".04em" }}>{thisYear}</span>
+                          <span style={{ fontSize:10, color:`${ac}99`, fontWeight:500, letterSpacing:".04em" }}>{thisYear}</span>
                           {diff !== null && (
-                            <span style={{ fontSize:10, fontWeight:700, color: up?"#66bb6a":"#ef5350" }}>
+                            <span style={{ fontSize:10, fontWeight:600, color: up?"#66bb6a":"#ef5350" }}>
                               {up?"↑":"↓"}{Math.abs(diff)}%
                             </span>
                           )}
                         </div>
-                        {/* Barra comparativa */}
                         {pct !== null && (
-                          <div style={{ margin:"6px 0 4px", height:3, background:"rgba(255,255,255,.07)", borderRadius:2, overflow:"hidden" }}>
-                            <div style={{ width:`${Math.min(pct,100)}%`, height:"100%", background: pct>=100?"#66bb6a":"#FC4C02", borderRadius:2 }}/>
+                          <div style={{ margin:"6px 0 4px", height:2, background:"rgba(255,255,255,.07)", borderRadius:2, overflow:"hidden" }}>
+                            <div style={{ width:`${Math.min(pct,100)}%`, height:"100%", background: pct>=100?"#66bb6a":ac, borderRadius:2 }}/>
                           </div>
                         )}
-                        {/* Ano anterior */}
-                        <div style={{ fontSize:11, color:"rgba(255,255,255,.3)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                          <span>{lastYear}: <strong style={{color:"rgba(255,255,255,.45)"}}>{s.fmt(s.prev)}</strong></span>
-                          {pct !== null && <span style={{ fontSize:10, color:"rgba(255,255,255,.2)" }}>{pct}%</span>}
+                        <div style={{ fontSize:11, color:"rgba(255,255,255,.28)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                          <span>{lastYear}: <strong style={{color:"rgba(255,255,255,.4)", fontWeight:500}}>{s.fmt(s.prev)}</strong></span>
+                          {pct !== null && <span style={{ fontSize:10, color:"rgba(255,255,255,.18)" }}>{pct}%</span>}
                         </div>
                       </div>
                     );
@@ -880,7 +947,7 @@ export default function StravaIntelligence() {
               <CardHeader title="Atividades Recentes" info={"Últimas 16 atividades registadas no Strava.\nPR = Personal Record nessa distância.\nZonas de FC baseadas nas configurações Garmin."}/>
               <div className="act-table-header">
                 {["Atividade","Dist","Tempo","Pace","FC","Elev"].map(h=>(
-                  <span key={h} style={{ fontSize:9, color:"rgba(255,255,255,.22)", fontWeight:700, letterSpacing:".09em", textTransform:"uppercase" }}>{h}</span>
+                  <span key={h} style={{ fontSize:9, color:"rgba(255,255,255,.28)", fontWeight:500, letterSpacing:".07em", textTransform:"uppercase" }}>{h}</span>
                 ))}
               </div>
               {activities.slice(0,16).map(a=><ActivityRow key={a.id} act={a}/>)}
@@ -893,27 +960,27 @@ export default function StravaIntelligence() {
           <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
             <div className="kpi-grid">
               {[
-                { icon:"🔵", label:"CTL · Fitness crónico",  value:latest.ctl.toFixed(1), sub:"Média ponderada 42 dias",
+                { icon:<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00C4B4" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>, color:"#00C4B4", label:"CTL · Fitness crónico",  value:latest.ctl.toFixed(1), sub:"Média ponderada 42 dias",
                   info:"Chronic Training Load: representa o teu nível de fitness acumulado.\nCalculado como média exponencial ponderada (constante de tempo 42 dias).\nValor mais alto = mais apto, mas também mais fatigado." },
-                { icon:"🟠", label:"ATL · Fadiga aguda",     value:latest.atl.toFixed(1), sub:"Média ponderada 7 dias",
+                { icon:<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FC4C02" strokeWidth="2"><path d="M8.5 14.5A2.5 2.5 0 0011 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 11-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 002.5 2.5z"/></svg>, color:"#FC4C02", label:"ATL · Fadiga aguda",     value:latest.atl.toFixed(1), sub:"Média ponderada 7 dias",
                   info:"Acute Training Load: representa a fadiga acumulada recentemente.\nCalculado com constante de tempo 7 dias.\nValor alto após semana intensa é normal — requer recuperação." },
-                { icon:"🟢", label:"TSB · Forma",
+                { icon:<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#66bb6a" strokeWidth="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>, color:"#66bb6a", label:"TSB · Forma",
                   value:`${latest.tsb>0?"+":""}${latest.tsb.toFixed(1)}`,
                   accent:latest.tsb>2,
                   sub:latest.tsb>5?"Pronto para competir":latest.tsb<-12?"Cuidado: sobrecarga":"Equilíbrio de treino",
                   info:"Training Stress Balance = CTL − ATL.\nZona óptima de performance: +5 a +15.\nAbaixo de −15: overtraining. Acima de +20: possível destreino." },
               ].map(s => (
                 <div key={s.label} style={{
-                  background: s.accent ? "linear-gradient(135deg,#FC4C02,#c93700)" : C.surface,
-                  border: s.accent ? "none" : `1px solid ${C.border}`,
+                  background: s.accent ? "rgba(102,187,106,.15)" : C.surface,
+                  border: s.accent ? "1px solid rgba(102,187,106,.35)" : `1px solid ${C.border}`,
                   borderRadius:14, padding:"18px 22px", display:"flex", flexDirection:"column", gap:3,
                   position:"relative",
                 }}>
                   <div style={{ position:"absolute", top:10, right:12 }}><InfoIcon text={s.info}/></div>
-                  {s.icon && <span style={{ fontSize:18, marginBottom:2 }}>{s.icon}</span>}
-                  <span style={{ fontSize:26, fontWeight:800, fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:"-.5px", color: s.accent?"#fff":C.text }}>{s.value}</span>
-                  <span style={{ fontSize:10, fontWeight:500, letterSpacing:"0.07em", textTransform:"uppercase", color: s.accent?"rgba(255,255,255,.8)":C.muted }}>{s.label}</span>
-                  {s.sub && <span style={{ fontSize:11, color: s.accent?"rgba(255,255,255,.6)":"rgba(255,255,255,.3)", marginTop:1 }}>{s.sub}</span>}
+                  {s.icon && <span style={{ marginBottom:2 }}>{s.icon}</span>}
+                  <span style={{ fontSize:26, fontWeight:700, fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:"-.5px", color: s.accent?"#66bb6a":(s.color||C.text) }}>{s.value}</span>
+                  <span style={{ fontSize:10, fontWeight:500, letterSpacing:"0.06em", textTransform:"uppercase", color: s.accent?"rgba(255,255,255,.8)":C.muted }}>{s.label}</span>
+                  {s.sub && <span style={{ fontSize:11, color: s.accent?"rgba(255,255,255,.7)":"rgba(255,255,255,.3)", marginTop:1 }}>{s.sub}</span>}
                 </div>
               ))}
             </div>
@@ -970,7 +1037,7 @@ export default function StravaIntelligence() {
                   {[{z:"Z1",label:"Recuperação",bpm:"≤108",c:"#4fc3f7"},{z:"Z2",label:"Aeróbico",bpm:"109-133",c:"#66bb6a"},{z:"Z3",label:"Tempo",bpm:"134-152",c:"#ffa726"},{z:"Z4",label:"Limiar",bpm:"153-167",c:"#ef5350"},{z:"Z5",label:"VO₂max",bpm:"≥168",c:"#b71c1c"}].map(z=>(
                     <div key={z.z} style={{ display:"flex", alignItems:"center", gap:5, fontSize:10, color:"rgba(255,255,255,.45)" }}>
                       <div style={{ width:9,height:9,borderRadius:2,background:z.c }}/>
-                      <span style={{ color:z.c,fontWeight:700 }}>{z.z}</span> {z.label} <span style={{ color:"rgba(255,255,255,.25)" }}>{z.bpm}</span>
+                      <span style={{ color:z.c,fontWeight:600 }}>{z.z}</span> {z.label} <span style={{ color:"rgba(255,255,255,.25)" }}>{z.bpm}</span>
                     </div>
                   ))}
                 </div>
@@ -1208,25 +1275,41 @@ export default function StravaIntelligence() {
             <div className="pr-grid">
               {prs.map(pr => <PRCard key={pr.label} pr={pr}/>)}
             </div>
-            {/* Race pace comparison */}
+            {/* Race pace comparison — horizontal legível */}
             <Card>
-              <CardHeader title="Pace médio por distância" info={"Pace médio calculado a partir dos melhores resultados registados por intervalo de distância.\nPermite ver progressão entre distâncias de treino."}/>
-              <div style={{ padding:"16px 8px 12px" }}>
-                <ResponsiveContainer width="100%" height={180}>
-                  <BarChart data={prs.filter(p=>p.pace).map(p=>({ dist:p.label, pace:p.pace ? parseInt(p.pace.split(":")[0])*60+parseInt(p.pace.split(":")[1]) : null, label:p.pace }))}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.04)"/>
-                    <XAxis dataKey="dist" tick={{fontSize:11,fill:"rgba(255,255,255,.5)",fontWeight:700}}/>
-                    <YAxis reversed domain={["auto","auto"]} tickFormatter={v=>fmtPace(v)} tick={{fontSize:9,fill:"rgba(255,255,255,.28)"}}/>
-                    <Tooltip content={({active,payload,label})=>{
-                      if(!active||!payload?.length)return null;
-                      return <div style={{background:"#1a1a2e",border:`1px solid ${C.faint}`,borderRadius:9,padding:"8px 12px",fontSize:12}}>
-                        <div style={{color:C.muted,marginBottom:4}}>{label}</div>
-                        <div style={{color:"#FC4C02",fontWeight:600}}>Pace PR: {fmtPace(payload[0].value)}/km</div>
-                      </div>;
-                    }}/>
-                    <Bar dataKey="pace" name="Pace PR" fill="#FC4C02" radius={[4,4,0,0]}/>
-                  </BarChart>
-                </ResponsiveContainer>
+              <CardHeader title="Melhor pace por distância" info={"Melhor pace registado em treinos e provas por cada distância.\nValores mais baixos (barras mais compridas) = mais rápido."}/>
+              <div style={{ padding:"20px 24px" }}>
+                {prs.filter(p=>p.pr).map(p => {
+                  const secs = p.pace ? parseInt(p.pace.split(":")[0])*60+parseInt(p.pace.split(":")[1]) : 0;
+                  // 3:30/km = 210s (elite) → 6:30/km = 390s (base) — normalise to bar width
+                  const pct = Math.max(10, Math.min(100, Math.round((390 - secs) / (390 - 180) * 100)));
+                  const col = secs < 270 ? "#FC4C02" : secs < 330 ? "#ffa726" : "#00C4B4";
+                  return (
+                    <div key={p.label} style={{ marginBottom:16 }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                        <span style={{ fontSize:12, fontWeight:600, color:"rgba(255,255,255,.7)", letterSpacing:".04em" }}>{p.label}</span>
+                        <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+                          <span style={{ fontSize:11, color:"rgba(255,255,255,.35)" }}>pace</span>
+                          <span style={{ fontSize:15, fontWeight:700, fontFamily:"'Barlow Condensed',sans-serif", color:col }}>{p.pace}/km</span>
+                          <span style={{ fontSize:11, color:"rgba(255,255,255,.35)" }}>tempo</span>
+                          <span style={{ fontSize:15, fontWeight:700, fontFamily:"'Barlow Condensed',sans-serif", color:"rgba(255,255,255,.7)" }}>{p.pr}</span>
+                        </div>
+                      </div>
+                      <div style={{ height:8, background:"rgba(255,255,255,.06)", borderRadius:4, overflow:"hidden" }}>
+                        <div style={{ width:`${pct}%`, height:"100%", background:col, borderRadius:4, transition:"width .6s ease" }}/>
+                      </div>
+                      <div style={{ display:"flex", justifyContent:"space-between", marginTop:4, fontSize:10, color:"rgba(255,255,255,.22)" }}>
+                        <span>{p.name}</span>
+                        <span>{p.date}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+                {prs.every(p=>!p.pr) && (
+                  <p style={{ color:"rgba(255,255,255,.3)", fontSize:13, textAlign:"center", padding:"20px 0" }}>
+                    Sem corridas suficientes nessas distâncias nas últimas 300 atividades.
+                  </p>
+                )}
               </div>
             </Card>
             {/* Top 10 races */}
@@ -1306,7 +1389,7 @@ export default function StravaIntelligence() {
                           <div style={{ height:90,display:"flex",alignItems:"flex-end",justifyContent:"center",marginBottom:6 }}>
                             <div style={{ width:"65%",background:`rgba(252,76,2,${.15+.85*counts[i]/(maxC||1)})`,borderRadius:"4px 4px 0 0",height:`${(counts[i]/(maxC||1))*100}%`,minHeight:4,transition:"height .6s ease" }}/>
                           </div>
-                          <div style={{ fontSize:16,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif",color:"#FC4C02" }}>{counts[i]}</div>
+                          <div style={{ fontSize:16,fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif",color:"#00C4B4" }}>{counts[i]}</div>
                           <div style={{ fontSize:9,color:"rgba(255,255,255,.3)",marginTop:2 }}>{km[i].toFixed(0)}km</div>
                         </div>
                       ))}
@@ -1349,10 +1432,10 @@ export default function StravaIntelligence() {
               <TSBGauge tsb={latest.tsb} ctl={latest.ctl} atl={latest.atl}/>
               <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
                 <div className="coach-stats-grid">
-                  <Stat small icon="📈" label="Tendência CTL" value={tsbData.length>8?(latest.ctl>tsbData[tsbData.length-8]?.ctl?"↑ A melhorar":"↓ A descer"):"—"} sub="vs semana anterior"/>
-                  <Stat small icon="🏃" label="Volume última semana" value={`${weeklyData[weeklyData.length-1]?.km?.toFixed(0)||0}km`}/>
-                  <Stat small icon="🏆" label="PR mais recente" value={prs.find(p=>p.pr)?.label||"—"} sub={prs.find(p=>p.pr)?.pr}/>
-                  <Stat small icon="❤️" label="FC média recente" value={`${Math.round(runs.slice(0,10).filter(r=>r.average_heartrate).reduce((s,r)=>s+r.average_heartrate,0)/(runs.slice(0,10).filter(r=>r.average_heartrate).length||1))}bpm`}/>
+                  <Stat small icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00C4B4" strokeWidth="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>} label="Tendência CTL" value={tsbData.length>8?(latest.ctl>tsbData[tsbData.length-8]?.ctl?"↑ A melhorar":"↓ A descer"):"—"} sub="vs semana anterior"/>
+                  <Stat small icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00C4B4" strokeWidth="2"><rect x="2" y="14" width="4" height="7" rx="1"/><rect x="9" y="9" width="4" height="12" rx="1"/><rect x="16" y="4" width="4" height="17" rx="1"/></svg>} label="Volume última semana" value={`${weeklyData[weeklyData.length-1]?.km?.toFixed(0)||0}km`}/>
+                  <Stat small icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ffd54f" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>} label="PR mais recente" value={prs.find(p=>p.pr)?.label||"—"} sub={prs.find(p=>p.pr)?.pr}/>
+                  <Stat small icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FC4C02" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>} label="FC média recente" value={`${Math.round(runs.slice(0,10).filter(r=>r.average_heartrate).reduce((s,r)=>s+r.average_heartrate,0)/(runs.slice(0,10).filter(r=>r.average_heartrate).length||1))}bpm`}/>
                 </div>
               </div>
             </div>
