@@ -360,14 +360,12 @@ function HeatMap({ activities }) {
   );
 }
 
-function ActivityRow({ act }) {
+function ActivityRow({ act, onClick }) {
   const speed = act.average_speed || 0;
   const pace  = speed > 0 ? 1000/speed : 0;
   const hrZ   = act.average_heartrate ? getZone(act.average_heartrate) : null;
   return (
-    <div className="act-row"
-      onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,.025)"}
-      onMouseLeave={e=>e.currentTarget.style.background=""}>
+    <div className="act-row" onClick={onClick}>
       <div>
         <div style={{ fontSize:13, fontWeight:600, color:C.text, display:"flex", alignItems:"center", gap:6 }}>
           {act.pr_rank===1 && <span style={{ fontSize:10, background:"rgba(252,76,2,.2)", color:"#FC4C02", borderRadius:3, padding:"1px 5px", fontWeight:700 }}>PR</span>}
@@ -384,6 +382,268 @@ function ActivityRow({ act }) {
         ? <span style={{ fontSize:11, fontWeight:600, color:hrZ.color, background:`${hrZ.color}22`, borderRadius:4, padding:"2px 6px", textAlign:"center" }}>{hrZ.label} {Math.round(act.average_heartrate)}</span>
         : <span/>}
       <span className="act-col-elev" style={{ fontSize:11, color:"rgba(255,255,255,.3)" }}>↑{Math.round(act.total_elevation_gain||0)}m</span>
+    </div>
+  );
+}
+
+// ─── ACTIVITY DETAIL MODAL ────────────────────────────────────────────────────
+function ActivityDetail({ act, token, onClose }) {
+  const [detail,   setDetail]   = useState(null);
+  const [streams,  setStreams]  = useState(null);
+  const [kudos,    setKudos]   = useState([]);
+  const [comments, setComments]= useState([]);
+  const [loading,  setLoading] = useState(true);
+  const [activeStream, setActiveStream] = useState("heartrate");
+  const mapRef = useRef(null);
+  const mapInst = useRef(null);
+
+  useEffect(() => {
+    if (!token || !act) return;
+    setLoading(true);
+    Promise.all([
+      fetch(`https://www.strava.com/api/v3/activities/${act.id}`, { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.json()),
+      fetch(`https://www.strava.com/api/v3/activities/${act.id}/streams?keys=latlng,heartrate,altitude,velocity_smooth,cadence,distance&key_by_type=true`, { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.json()),
+      fetch(`https://www.strava.com/api/v3/activities/${act.id}/kudos`, { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.json()),
+      fetch(`https://www.strava.com/api/v3/activities/${act.id}/comments`, { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.json()),
+    ]).then(([d, s, k, c]) => {
+      setDetail(d);
+      setStreams(s);
+      setKudos(Array.isArray(k) ? k : []);
+      setComments(Array.isArray(c) ? c : []);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, [act, token]);
+
+  // Mount Leaflet map once detail loads
+  useEffect(() => {
+    if (!mapRef.current || !streams?.latlng?.data?.length) return;
+    if (mapInst.current) { mapInst.current.remove(); mapInst.current = null; }
+
+    // Dynamically load Leaflet
+    const link = document.createElement("link");
+    link.rel = "stylesheet"; link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+    document.head.appendChild(link);
+
+    const script = document.createElement("script");
+    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    script.onload = () => {
+      const L = window.L;
+      const coords = streams.latlng.data;
+      const map = L.map(mapRef.current, { zoomControl:true, scrollWheelZoom:false });
+      mapInst.current = map;
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+        attribution:"© OpenStreetMap © CARTO", maxZoom:19
+      }).addTo(map);
+
+      // Draw route
+      const polyline = L.polyline(coords, { color:"#FC4C02", weight:3, opacity:.9 }).addTo(map);
+      map.fitBounds(polyline.getBounds(), { padding:[20,20] });
+
+      // Start/end markers
+      const startIcon = L.divIcon({ html:`<div style="width:12px;height:12px;background:#00C4B4;border-radius:50%;border:2px solid #fff"></div>`, iconSize:[12,12], iconAnchor:[6,6], className:"" });
+      const endIcon   = L.divIcon({ html:`<div style="width:12px;height:12px;background:#FC4C02;border-radius:50%;border:2px solid #fff"></div>`, iconSize:[12,12], iconAnchor:[6,6], className:"" });
+      L.marker(coords[0], { icon:startIcon }).bindTooltip("Início").addTo(map);
+      L.marker(coords[coords.length-1], { icon:endIcon }).bindTooltip("Fim").addTo(map);
+    };
+    document.head.appendChild(script);
+    return () => { if (mapInst.current) { mapInst.current.remove(); mapInst.current = null; } };
+  }, [streams]);
+
+  // Build stream chart data
+  const streamData = React.useMemo(() => {
+    if (!streams?.distance?.data) return [];
+    return streams.distance.data.map((d, i) => ({
+      dist: +(d/1000).toFixed(2),
+      hr:   streams.heartrate?.data?.[i] || null,
+      alt:  streams.altitude?.data?.[i]  || null,
+      pace: streams.velocity_smooth?.data?.[i] > 0 ? +(1000/streams.velocity_smooth.data[i]).toFixed(0) : null,
+      cad:  streams.cadence?.data?.[i]   || null,
+    })).filter((_,i) => i % 5 === 0); // sample every 5 points for perf
+  }, [streams]);
+
+  const streamConfig = {
+    heartrate: { key:"hr",   color:"#FC4C02", label:"FC (bpm)",     unit:"bpm" },
+    altitude:  { key:"alt",  color:"#00C4B4", label:"Altitude (m)", unit:"m" },
+    pace:      { key:"pace", color:"#ffd54f", label:"Pace (s/km)",  unit:"s/km", reversed:true },
+    cadence:   { key:"cad",  color:"#ab47bc", label:"Cadência (spm)",unit:"spm" },
+  };
+
+  const sc = streamConfig[activeStream];
+
+  const laps = detail?.laps || [];
+
+  return (
+    <div style={{
+      position:"fixed", inset:0, zIndex:1000,
+      background:"rgba(0,0,0,.75)", backdropFilter:"blur(4px)",
+      display:"flex", alignItems:"center", justifyContent:"center",
+      padding:16,
+    }} onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
+      <div style={{
+        background:"#0f0f1a", border:`1px solid ${C.border}`, borderRadius:18,
+        width:"100%", maxWidth:900, maxHeight:"90vh", overflow:"auto",
+        display:"flex", flexDirection:"column",
+      }}>
+        {/* Header */}
+        <div style={{ padding:"18px 22px 14px", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+          <div>
+            <div style={{ fontSize:16, fontWeight:600, color:C.text }}>{act.name}</div>
+            <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{fmtDate(act.start_date)} · {act.type} · {fmtDist(act.distance)}</div>
+          </div>
+          <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+            <a href={`https://www.strava.com/activities/${act.id}`} target="_blank" rel="noreferrer"
+              style={{ fontSize:11, color:"#FC4C02", textDecoration:"none", border:"1px solid rgba(252,76,2,.3)", borderRadius:7, padding:"5px 10px" }}>
+              Ver no Strava ↗
+            </a>
+            <button onClick={onClose} style={{ background:"rgba(255,255,255,.08)", border:"none", borderRadius:8, color:C.text, width:32, height:32, cursor:"pointer", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center" }}>✕</button>
+          </div>
+        </div>
+
+        {loading ? (
+          <div style={{ padding:60, textAlign:"center", color:C.muted }}>A carregar dados...</div>
+        ) : (
+          <div style={{ padding:"18px 22px", display:"flex", flexDirection:"column", gap:16 }}>
+
+            {/* KPIs */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:8 }}>
+              {[
+                { label:"Distância",  value:fmtDist(act.distance),          color:"#00C4B4" },
+                { label:"Tempo",      value:fmtTime(act.moving_time),        color:"#00C4B4" },
+                { label:"Pace médio", value:act.average_speed>0?`${fmtPace(1000/act.average_speed)}/km`:"—", color:"#ffd54f" },
+                { label:"FC média",   value:act.average_heartrate?`${Math.round(act.average_heartrate)}bpm`:"—", color:"#FC4C02" },
+                { label:"FC máx",     value:act.max_heartrate?`${Math.round(act.max_heartrate)}bpm`:"—",     color:"#ef5350" },
+                { label:"Elevação",   value:`↑${Math.round(act.total_elevation_gain||0)}m`,                  color:"#66bb6a" },
+                { label:"Kudos",      value:`👏 ${detail?.kudos_count||kudos.length||0}`,                    color:"#ffd54f" },
+                { label:"Calorias",   value:detail?.calories?`${detail.calories}kcal`:"—",                   color:"#ab47bc" },
+              ].map(k=>(
+                <div key={k.label} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"10px 12px", textAlign:"center" }}>
+                  <div style={{ fontSize:16, fontWeight:700, fontFamily:"'Barlow Condensed',sans-serif", color:k.color }}>{k.value}</div>
+                  <div style={{ fontSize:9, color:C.muted, textTransform:"uppercase", letterSpacing:".06em", marginTop:2 }}>{k.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Map */}
+            {streams?.latlng?.data?.length ? (
+              <div style={{ borderRadius:12, overflow:"hidden", border:`1px solid ${C.border}` }}>
+                <div ref={mapRef} style={{ height:300, width:"100%", background:"#111" }}/>
+              </div>
+            ) : (
+              <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:24, textAlign:"center", color:C.muted, fontSize:13 }}>
+                GPS não disponível para esta atividade
+              </div>
+            )}
+
+            {/* Stream chart */}
+            {streamData.length > 0 && (
+              <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 18px" }}>
+                <div style={{ display:"flex", gap:6, marginBottom:12, flexWrap:"wrap" }}>
+                  {Object.entries(streamConfig).map(([k,v]) => (
+                    streams?.[k === "pace" ? "velocity_smooth" : k === "hr" ? "heartrate" : k]?.data &&
+                    <button key={k} onClick={()=>setActiveStream(k)}
+                      style={{ background: activeStream===k ? v.color+"22" : "transparent", border:`1px solid ${activeStream===k?v.color:C.border}`, borderRadius:6, padding:"4px 10px", color: activeStream===k ? v.color : C.muted, fontSize:11, cursor:"pointer", transition:"all .15s" }}>
+                      {v.label}
+                    </button>
+                  ))}
+                </div>
+                <ResponsiveContainer width="100%" height={160}>
+                  <AreaChart data={streamData}>
+                    <defs>
+                      <linearGradient id="sgrd" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={sc.color} stopOpacity={0.25}/>
+                        <stop offset="95%" stopColor={sc.color} stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.04)"/>
+                    <XAxis dataKey="dist" tick={{fontSize:9,fill:C.muted}} tickFormatter={v=>`${v}km`}/>
+                    <YAxis reversed={sc.reversed} tick={{fontSize:9,fill:C.muted}} tickFormatter={v=>sc.key==="pace"?fmtPace(v):v} domain={["auto","auto"]}/>
+                    <Tooltip content={({active,payload})=>{
+                      if(!active||!payload?.length)return null;
+                      const v = payload[0]?.value;
+                      return <div style={{background:"#1a1a2e",border:`1px solid ${C.faint}`,borderRadius:8,padding:"6px 10px",fontSize:11}}>
+                        <span style={{color:sc.color}}>{sc.key==="pace"?`${fmtPace(v)}/km`:v ? `${v} ${sc.unit}` : "—"}</span>
+                      </div>;
+                    }}/>
+                    <Area type="monotone" dataKey={sc.key} stroke={sc.color} strokeWidth={1.5} fill="url(#sgrd)" dot={false} connectNulls/>
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Laps */}
+            {laps.length > 1 && (
+              <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+                <div style={{ padding:"10px 16px", borderBottom:`1px solid ${C.border}`, fontSize:11, fontWeight:500, letterSpacing:".06em", textTransform:"uppercase", color:C.muted }}>
+                  Splits / Laps
+                </div>
+                <div style={{ overflowX:"auto" }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                    <thead>
+                      <tr style={{ color:"rgba(255,255,255,.3)", fontSize:10, textTransform:"uppercase", letterSpacing:".06em" }}>
+                        {["#","Distância","Tempo","Pace","FC avg","FC máx","Elev"].map(h=>(
+                          <td key={h} style={{ padding:"7px 14px", textAlign:h==="#"?"center":"right" }}>{h}</td>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {laps.map((lap,i)=>{
+                        const lapPace = lap.average_speed > 0 ? 1000/lap.average_speed : 0;
+                        return (
+                          <tr key={lap.id} style={{ borderTop:`1px solid rgba(255,255,255,.04)` }}>
+                            <td style={{ padding:"7px 14px", textAlign:"center", color:C.muted }}>{i+1}</td>
+                            <td style={{ padding:"7px 14px", textAlign:"right", color:"#00C4B4" }}>{fmtDist(lap.distance)}</td>
+                            <td style={{ padding:"7px 14px", textAlign:"right", color:C.text }}>{fmtTime(lap.moving_time)}</td>
+                            <td style={{ padding:"7px 14px", textAlign:"right", color:"#ffd54f" }}>{lapPace?`${fmtPace(lapPace)}/km`:"—"}</td>
+                            <td style={{ padding:"7px 14px", textAlign:"right", color:"#FC4C02" }}>{lap.average_heartrate?`${Math.round(lap.average_heartrate)}bpm`:"—"}</td>
+                            <td style={{ padding:"7px 14px", textAlign:"right", color:"#ef5350" }}>{lap.max_heartrate?`${Math.round(lap.max_heartrate)}bpm`:"—"}</td>
+                            <td style={{ padding:"7px 14px", textAlign:"right", color:"#66bb6a" }}>↑{Math.round(lap.total_elevation_gain||0)}m</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Kudos + Comments */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+              <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"12px 16px" }}>
+                <div style={{ fontSize:11, fontWeight:500, letterSpacing:".06em", textTransform:"uppercase", color:C.muted, marginBottom:8 }}>
+                  👏 Kudos ({kudos.length})
+                </div>
+                {kudos.length === 0
+                  ? <div style={{ fontSize:12, color:"rgba(255,255,255,.25)" }}>Sem kudos ainda</div>
+                  : <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                      {kudos.map(k=>(
+                        <span key={k.athlete_id} style={{ fontSize:11, color:"rgba(255,255,255,.55)", background:"rgba(255,255,255,.05)", borderRadius:6, padding:"3px 8px" }}>
+                          {k.firstname} {k.lastname?.charAt(0)}.
+                        </span>
+                      ))}
+                    </div>
+                }
+              </div>
+              <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"12px 16px" }}>
+                <div style={{ fontSize:11, fontWeight:500, letterSpacing:".06em", textTransform:"uppercase", color:C.muted, marginBottom:8 }}>
+                  💬 Comentários ({comments.length})
+                </div>
+                {comments.length === 0
+                  ? <div style={{ fontSize:12, color:"rgba(255,255,255,.25)" }}>Sem comentários</div>
+                  : <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                      {comments.map(c=>(
+                        <div key={c.id} style={{ fontSize:12 }}>
+                          <span style={{ color:"#00C4B4", fontWeight:600 }}>{c.athlete?.firstname}: </span>
+                          <span style={{ color:"rgba(255,255,255,.6)" }}>{c.text}</span>
+                        </div>
+                      ))}
+                    </div>
+                }
+              </div>
+            </div>
+
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -612,6 +872,7 @@ export default function StravaIntelligence() {
   const [tab,        setTab]        = useState("overview");
   const [useMock,    setUseMock]    = useState(false);
   const [error,      setError]      = useState(null);
+  const [selectedAct, setSelectedAct] = useState(null);
 
   // ── OAuth callback: apanha o ?code= que o Strava devolve e troca por token ──
   useEffect(() => {
@@ -803,6 +1064,11 @@ export default function StravaIntelligence() {
         </div>
       </nav>
 
+      {/* ── Activity Detail Modal ── */}
+      {selectedAct && (
+        <ActivityDetail act={selectedAct} token={token} onClose={()=>setSelectedAct(null)}/>
+      )}
+
       {/* ── Page content ── */}
       <div key={tab} className="page-content page">
 
@@ -950,7 +1216,7 @@ export default function StravaIntelligence() {
                   <span key={h} style={{ fontSize:9, color:"rgba(255,255,255,.28)", fontWeight:500, letterSpacing:".07em", textTransform:"uppercase" }}>{h}</span>
                 ))}
               </div>
-              {activities.slice(0,16).map(a=><ActivityRow key={a.id} act={a}/>)}
+              {activities.slice(0,16).map(a=><ActivityRow key={a.id} act={a} onClick={()=>setSelectedAct(a)}/>)}
             </Card>
           </div>
         )}
@@ -1320,7 +1586,7 @@ export default function StravaIntelligence() {
                   <span key={h} style={{ fontSize:9,color:"rgba(255,255,255,.22)",fontWeight:700,letterSpacing:".09em",textTransform:"uppercase" }}>{h}</span>
                 ))}
               </div>
-              {runs.filter(r=>r.distance>4000).sort((a,b)=>b.average_speed-a.average_speed).slice(0,12).map(a=><ActivityRow key={a.id} act={a}/>)}
+              {runs.filter(r=>r.distance>4000).sort((a,b)=>b.average_speed-a.average_speed).slice(0,12).map(a=><ActivityRow key={a.id} act={a} onClick={()=>setSelectedAct(a)}/>)}
             </Card>
           </div>
         )}

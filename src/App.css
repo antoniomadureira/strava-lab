@@ -175,8 +175,10 @@
 .act-row {
   border-bottom: 1px solid rgba(255,255,255,.04);
   transition: background .12s;
+  cursor: pointer;
+  pointer-events: all;
 }
-.act-row:hover { background: rgba(255,255,255,.025); }
+.act-row:hover { background: rgba(255,255,255,.06); }
 
 /* Mobile: collapse to 3 columns */
 @media (max-width: 640px) {
