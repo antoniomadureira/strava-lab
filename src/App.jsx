@@ -148,7 +148,10 @@ function getMonthlyData(acts) {
     months[key].runs++;
     months[key].elev += a.total_elevation_gain||0;
   });
-  return Object.values(months).slice(-12).map(m => ({ ...m, km: +m.km.toFixed(1) }));
+  return Object.entries(months)
+    .sort(([a],[b]) => a.localeCompare(b))
+    .slice(-12)
+    .map(([,m]) => ({ ...m, km: +m.km.toFixed(1) }));
 }
 
 function getPRs(acts) {
@@ -499,11 +502,8 @@ function ActivityDetail({ act, token, onClose }) {
           </div>
         </div>
 
-        {loading ? (
-          <div style={{ padding:60, textAlign:"center", color:C.muted }}>A carregar dados...</div>
-        ) : (
-          <div style={{ padding:"18px 22px", display:"flex", flexDirection:"column", gap:16 }}>
-
+        {/* KPIs — disponíveis imediatamente da act */}
+        <div style={{ padding:"18px 22px", display:"flex", flexDirection:"column", gap:16 }}>
             {/* KPIs */}
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:8 }}>
               {[
@@ -523,10 +523,16 @@ function ActivityDetail({ act, token, onClose }) {
               ))}
             </div>
 
-            {/* Map */}
+            {/* Map — carrega progressivamente */}
             {streams?.latlng?.data?.length ? (
               <div style={{ borderRadius:12, overflow:"hidden", border:`1px solid ${C.border}` }}>
                 <div ref={mapRef} style={{ height:300, width:"100%", background:"#111" }}/>
+              </div>
+            ) : loading ? (
+              <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, height:160, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <div style={{ display:"flex", gap:5 }}>
+                  {[0,1,2].map(i=><div key={i} style={{ width:7,height:7,borderRadius:"50%",background:"#FC4C02",opacity:.6,animation:`bounce .9s ease-in-out ${i*.15}s infinite alternate` }}/>)}
+                </div>
               </div>
             ) : (
               <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:24, textAlign:"center", color:C.muted, fontSize:13 }}>
@@ -642,7 +648,6 @@ function ActivityDetail({ act, token, onClose }) {
             </div>
 
           </div>
-        )}
       </div>
     </div>
   );
