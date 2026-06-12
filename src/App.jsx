@@ -464,7 +464,7 @@ function ActivityDetail({ act, token, onClose }) {
   const streamConfig = {
     heartrate: { key:"hr",   color:"#FC4C02", label:"FC (bpm)",     unit:"bpm" },
     altitude:  { key:"alt",  color:"#00C4B4", label:"Altitude (m)", unit:"m" },
-    pace:      { key:"pace", color:"#ffd54f", label:"Pace (s/km)",  unit:"s/km", reversed:true },
+    pace:      { key:"pace", color:"#ffd54f", label:"Pace (min/km)", unit:"min/km", reversed:true },
     cadence:   { key:"cad",  color:"#ab47bc", label:"Cadência (spm)",unit:"spm" },
   };
 
@@ -473,15 +473,15 @@ function ActivityDetail({ act, token, onClose }) {
   const laps = detail?.laps || [];
 
   return (
-    <div style={{
+    <div className="modal-overlay" style={{
       position:"fixed", inset:0, zIndex:1000,
       background:"rgba(0,0,0,.75)", backdropFilter:"blur(4px)",
-      display:"flex", alignItems:"center", justifyContent:"center",
-      padding:16,
+      display:"flex", alignItems:"flex-end", justifyContent:"center",
+      padding:"0 16px 0",
     }} onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
-      <div style={{
-        background:"#0f0f1a", border:`1px solid ${C.border}`, borderRadius:18,
-        width:"100%", maxWidth:900, maxHeight:"90vh", overflow:"auto",
+      <div className="modal-panel" style={{
+        background:"#0f0f1a", border:`1px solid ${C.border}`, borderRadius:"18px 18px 0 0",
+        width:"100%", maxWidth:900, maxHeight:"92vh", overflow:"auto",
         display:"flex", flexDirection:"column",
       }}>
         {/* Header */}
@@ -788,7 +788,7 @@ function AICoach({ activities, athlete, tsbData }) {
       )}
 
       {/* Chat history */}
-      <div style={{ minHeight: messages.length ? 280 : 0, maxHeight: 400, overflowY:"auto", padding:"16px 20px", display:"flex", flexDirection:"column", gap:12 }}>
+      <div style={{ minHeight: messages.length ? 280 : 0, maxHeight: 600, overflowY:"auto", padding:"16px 20px", display:"flex", flexDirection:"column", gap:12 }}>
         {messages.map((m, i) => (
           <div key={i} style={{ display:"flex", justifyContent: m.role==="user"?"flex-end":"flex-start" }}>
             <div style={{
@@ -1482,15 +1482,21 @@ export default function StravaIntelligence() {
               <Stat icon="📐" label="Eficiência aerób." value={paceTrend.length?`${(paceTrend.reduce((s,r)=>s+r.pace/r.hr,0)/paceTrend.length*100).toFixed(1)}`:"—"} sub="pace/bpm ×100"/>
             </div>
             <Card>
-              <CardHeader title="Evolução de pace" info={"Pace médio (seg/km) das últimas 25 corridas.\nValores mais baixos = mais rápido.\nTendência descendente indica melhoria de desempenho."}/>
+              <CardHeader title="Evolução de pace" info={"Pace médio (min/km) das últimas 25 corridas.\nValores mais baixos = mais rápido.\nTendência descendente indica melhoria de desempenho."}/>
               <div style={{ padding:"16px 8px 12px" }}>
                 <ResponsiveContainer width="100%" height={200}>
                   <LineChart data={paceTrend}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,.04)"/>
                     <XAxis dataKey="date" tick={{fontSize:9,fill:"rgba(255,255,255,.28)"}}/>
                     <YAxis reversed domain={["auto","auto"]} tickFormatter={v=>fmtPace(v)} tick={{fontSize:9,fill:"rgba(255,255,255,.28)"}}/>
-                    <Tooltip content={<TT/>}/>
-                    <Line dataKey="pace" name="Pace (s/km)" stroke="#FC4C02" strokeWidth={2.5} dot={{r:3,fill:"#FC4C02"}}/>
+                    <Tooltip content={({active,payload,label})=>{
+                      if(!active||!payload?.length) return null;
+                      return <div style={{background:"#1a1a2e",border:`1px solid ${C.faint}`,borderRadius:10,padding:"9px 13px",fontSize:12}}>
+                        <div style={{color:C.muted,marginBottom:5,fontSize:11}}>{label}</div>
+                        {payload.map((p,i)=><div key={i} style={{color:p.color||"#fff",fontWeight:600}}>{p.name}: {fmtPace(p.value)}/km</div>)}
+                      </div>;
+                    }}/>
+                    <Line dataKey="pace" name="Pace" stroke="#FC4C02" strokeWidth={2.5} dot={{r:3,fill:"#FC4C02"}}/>
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -1595,8 +1601,8 @@ export default function StravaIntelligence() {
         {tab === "heatmap" && (
           <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
             <div className="heatmap-stats">
-              <Stat icon="📅" label="Dias ativos (90d)" value={new Set(activities.map(a=>a.start_date.slice(0,10))).size}/>
-              <Stat icon="🔥" label="Streak atual" accent value={(() => {
+              <Stat icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00C4B4" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>} label="Dias ativos (90d)" value={new Set(activities.map(a=>a.start_date.slice(0,10))).size}/>
+              <Stat icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><path d="M12 2C8 2 4 5 4 9c0 5 8 13 8 13s8-8 8-13c0-4-4-7-8-7z"/><circle cx="12" cy="9" r="2.5" fill="rgba(255,255,255,.4)"/></svg>} label="Streak atual" accent value={(() => {
                 let s=0; const today=new Date();
                 for(let i=0;i<30;i++){
                   const d=new Date(today); d.setDate(today.getDate()-i);
@@ -1604,10 +1610,10 @@ export default function StravaIntelligence() {
                   if(activities.some(a=>a.start_date.slice(0,10)===key)) s++; else break;
                 } return `${s}d`;
               })()}/>
-              <Stat icon="🏃" label="Total atividades" value={activities.length}/>
-              <Stat icon="📊" label="Freq. semanal média" value={`${(runs.length/Math.max(weeklyData.length,1)).toFixed(1)}x`}/>
-              <Stat icon="🌙" label="Corridas noturnas (após 19h)" value={runs.filter(r=>new Date(r.start_date).getHours()>=19).length}/>
-              <Stat icon="🌅" label="Corridas matinais (antes 9h)" value={runs.filter(r=>new Date(r.start_date).getHours()<9).length}/>
+              <Stat icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00C4B4" strokeWidth="2"><circle cx="12" cy="5" r="2"/><path d="M10.2 8.2L7 14h3l1 5h2l1-5h3l-3.2-5.8"/></svg>} label="Total atividades" value={activities.length}/>
+              <Stat icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00C4B4" strokeWidth="2"><rect x="2" y="14" width="4" height="7" rx="1"/><rect x="9" y="9" width="4" height="12" rx="1"/><rect x="16" y="4" width="4" height="17" rx="1"/></svg>} label="Freq. semanal média" value={`${(runs.length/Math.max(weeklyData.length,1)).toFixed(1)}x`}/>
+              <Stat icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00C4B4" strokeWidth="2"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg>} label="Corridas noturnas (após 19h)" value={runs.filter(r=>new Date(r.start_date).getHours()>=19).length}/>
+              <Stat icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ffd54f" strokeWidth="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>} label="Corridas matinais (antes 9h)" value={runs.filter(r=>new Date(r.start_date).getHours()<9).length}/>
             </div>
             <Card>
               <CardHeader title="Mapa de calor · 12 meses" info={"Cada quadrado = 1 dia. Cor = volume em km nesse dia.\nSemanas começam na segunda-feira.\nPermite identificar padrões de consistência e períodos de descanso."}/>

@@ -36,7 +36,7 @@ module.exports = async function handler(req, res) {
     // Chamada à API
     const result = await model.generateContent({
       contents,
-      generationConfig: { maxOutputTokens: 1000, temperature: 0.7 }
+      generationConfig: { maxOutputTokens: 4096, temperature: 0.7 }
     });
 
     const reply = result.response.text();
