@@ -247,18 +247,19 @@ function CardHeader({ title, info }) {
   );
 }
 
-function Stat({ label, value, sub, accent, icon, small, color }) {
+function Stat({ label, value, sub, accent, icon, small, color, info }) {
   const ac = color || "#00C4B4";
   return (
     <div style={{
       background: accent ? "linear-gradient(135deg,#FC4C02,#c93700)" : C.surface,
       border: accent ? "none" : `1px solid ${C.border}`,
       borderRadius: 14, padding: small ? "14px 18px" : "18px 22px",
-      display: "flex", flexDirection: "column", gap: 3,
+      display: "flex", flexDirection: "column", gap: 3, position: "relative",
       transition: "transform .18s,box-shadow .18s", cursor: "default",
     }}
     onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 10px 32px rgba(0,0,0,.25)";}}
     onMouseLeave={e=>{e.currentTarget.style.transform="";e.currentTarget.style.boxShadow="";}}>
+      {info && <div style={{ position:"absolute", top:10, right:10 }}><InfoIcon text={info}/></div>}
       {icon && <span style={{ fontSize: 18, marginBottom: 2 }}>{icon}</span>}
       <span style={{ fontSize: small ? 22 : 26, fontWeight: 700, fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:"-.5px", color: accent?"#fff":ac }}>{value}</span>
       <span style={{ fontSize: 10, fontWeight: 500, letterSpacing:"0.06em", textTransform:"uppercase", color: accent?"rgba(255,255,255,.8)":C.muted }}>{label}</span>
@@ -1481,10 +1482,22 @@ export default function StravaIntelligence() {
         {tab === "pace" && (
           <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:10 }}>
-              <Stat icon="⚡" label="Pace médio (20)" value={fmtPace(paceTrend.reduce((s,r)=>s+r.pace,0)/(paceTrend.length||1))} sub="/km"/>
-              <Stat icon="🔥" label="Pace mais rápido" value={fmtPace(Math.min(...paceTrend.map(r=>r.pace).filter(Boolean)))} accent/>
-              <Stat icon="❤️" label="FC média"         value={`${Math.round(paceTrend.reduce((s,r)=>s+r.hr,0)/(paceTrend.length||1))}bpm`}/>
-              <Stat icon="📐" label="Eficiência aerób." value={paceTrend.length?`${(paceTrend.reduce((s,r)=>s+r.pace/r.hr,0)/paceTrend.length*100).toFixed(1)}`:"—"} sub="pace/bpm ×100"/>
+              <Stat
+                icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00C4B4" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>}
+                label="Pace médio (20)" value={fmtPace(paceTrend.reduce((s,r)=>s+r.pace,0)/(paceTrend.length||1))} sub="/km"
+                info={"Pace médio das últimas 20 corridas.\nCalculado a partir da velocidade média registada no Strava.\nInclui treinos fáceis e rodagens — não é o pace de competição."}/>
+              <Stat
+                icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>}
+                label="Pace mais rápido" value={fmtPace(Math.min(...paceTrend.map(r=>r.pace).filter(Boolean)))} accent
+                info={"Pace mais rápido registado nas últimas 20 corridas.\nCorresponde à corrida com maior velocidade média.\nPode ser um treino de intervalos ou corrida de competição."}/>
+              <Stat
+                icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef5350" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>}
+                label="FC média" value={`${Math.round(paceTrend.reduce((s,r)=>s+r.hr,0)/(paceTrend.length||1))}bpm`}
+                info={"FC média das últimas 20 corridas com dados de FC.\nZonas Garmin: Z1≤108 · Z2≤133 · Z3≤152 · Z4≤167 · Z5≥168\nFC elevada com pace lento pode indicar fadiga acumulada."}/>
+              <Stat
+                icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00C4B4" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="3" y1="20" x2="21" y2="20"/></svg>}
+                label="Eficiência aerób." value={paceTrend.length?`${(paceTrend.reduce((s,r)=>s+r.pace/r.hr,0)/paceTrend.length*100).toFixed(1)}`:"—"} sub="pace/bpm ×100"
+                info={"Índice de eficiência aeróbica = (pace ÷ FC) × 100.\nValores mais altos = melhor eficiência (mais rápido com menos esforço).\nMelhoria progressiva indica adaptação aeróbica ao treino."}/>
             </div>
             <Card>
               <CardHeader title="Evolução de pace" info={"Pace médio (min/km) das últimas 25 corridas.\nValores mais baixos = mais rápido.\nTendência descendente indica melhoria de desempenho."}/>
