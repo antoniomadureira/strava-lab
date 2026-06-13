@@ -1179,6 +1179,61 @@ export default function StravaIntelligence() {
               );
             })()}
 
+            {/* ── AI Daily Recommendation Banner ── */}
+            {(() => {
+              const tsb  = latest.tsb || 0;
+              const ctl  = latest.ctl || 0;
+              const atl  = latest.atl || 0;
+              const form = tsb > 10  ? { label:"Fresco",       color:"#66bb6a", bg:"rgba(102,187,106,.08)", border:"rgba(102,187,106,.25)", icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#66bb6a" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg> }
+                         : tsb > 2   ? { label:"Forma Óptima", color:"#00C4B4", bg:"rgba(0,196,180,.08)",   border:"rgba(0,196,180,.25)",   icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#00C4B4" strokeWidth="2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> }
+                         : tsb > -5  ? { label:"Neutro",       color:"#ffa726", bg:"rgba(255,167,38,.08)",  border:"rgba(255,167,38,.25)",  icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffa726" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12"/></svg> }
+                         : tsb > -15 ? { label:"Fatigado",     color:"#FC4C02", bg:"rgba(252,76,2,.08)",    border:"rgba(252,76,2,.3)",     icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FC4C02" strokeWidth="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> }
+                         :             { label:"Overreaching", color:"#ef5350", bg:"rgba(239,83,80,.08)",   border:"rgba(239,83,80,.3)",    icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef5350" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> };
+
+              const rec  = tsb > 10  ? { title:"Dia ideal para qualidade", detail:"Estás fresco e com boa forma. Faz um treino de intervalos, tempo run ou prova. Aproveita esta janela." }
+                         : tsb > 2   ? { title:"Boas condições para treinar", detail:"Forma óptima. Podes correr a intensidade moderada a alta. Evita apenas volume excessivo." }
+                         : tsb > -5  ? { title:"Mantém volume, evita intensidade máxima", detail:"Estado neutro. Rodagem fácil a moderada. Guarda a energia para quando o TSB subir." }
+                         : tsb > -15 ? { title:"Prioriza recuperação hoje", detail:"Fadiga acumulada elevada. Corrida leve (Z1/Z2) ou descanso activo. Não forces qualidade." }
+                         :             { title:"Descanso obrigatório", detail:"Overreaching. Risco real de lesão. Descanso completo ou actividade muito leve. Não corras hoje." };
+
+              const monNow = new Date(); monNow.setDate(monNow.getDate()-((monNow.getDay()+6)%7));
+              const weekKm = runs.filter(r=>new Date(r.start_date)>=monNow).reduce((s,r)=>s+r.distance/1000,0);
+
+              return (
+                <div style={{ background:form.bg, border:`1px solid ${form.border}`, borderRadius:16, padding:"18px 22px", display:"flex", alignItems:"center", gap:18 }}>
+                  {/* Status icon */}
+                  <div style={{ width:48, height:48, borderRadius:12, background:`rgba(${form.color === "#66bb6a" ? "102,187,106" : form.color === "#00C4B4" ? "0,196,180" : form.color === "#ffa726" ? "255,167,38" : form.color === "#FC4C02" ? "252,76,2" : "239,83,80"},.15)`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                    {form.icon}
+                  </div>
+
+                  {/* Main message */}
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+                      <span style={{ fontSize:11, fontWeight:700, letterSpacing:".1em", textTransform:"uppercase", color:form.color }}>{form.label}</span>
+                      <span style={{ fontSize:10, color:"rgba(255,255,255,.2)" }}>·</span>
+                      <span style={{ fontSize:11, color:"rgba(255,255,255,.35)" }}>TSB {tsb>0?"+":""}{tsb.toFixed(1)}</span>
+                    </div>
+                    <div style={{ fontSize:15, fontWeight:600, color:"rgba(255,255,255,.9)", marginBottom:3, fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:".02em" }}>{rec.title}</div>
+                    <div style={{ fontSize:12, color:"rgba(255,255,255,.45)", lineHeight:1.5 }}>{rec.detail}</div>
+                  </div>
+
+                  {/* Mini stats */}
+                  <div style={{ display:"flex", gap:12, flexShrink:0 }}>
+                    {[
+                      { label:"CTL", value:ctl.toFixed(0), color:"#FC4C02" },
+                      { label:"ATL", value:atl.toFixed(0), color:"#ffa726" },
+                      { label:"Semana", value:`${weekKm.toFixed(0)}km`, color:"#00C4B4" },
+                    ].map(s=>(
+                      <div key={s.label} style={{ textAlign:"center", background:"rgba(255,255,255,.05)", borderRadius:10, padding:"8px 14px" }}>
+                        <div style={{ fontSize:18, fontWeight:700, fontFamily:"'Barlow Condensed',sans-serif", color:s.color, lineHeight:1 }}>{s.value}</div>
+                        <div style={{ fontSize:9, color:"rgba(255,255,255,.3)", textTransform:"uppercase", letterSpacing:".07em", marginTop:3 }}>{s.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* TSB + Radar */}
             <div className="overview-charts" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:14 }}>
               <TSBGauge tsb={latest.tsb} ctl={latest.ctl} atl={latest.atl}/>
