@@ -154,88 +154,35 @@ function getMonthlyData(acts) {
 }
 
 function getPRs(acts) {
-  // Strava best_efforts standard distances (metres → label)
-  const DISTS = [
-    { key:"400m",      m:400,    label:"400m"    },
-    { key:"1K",        m:1000,   label:"1K"      },
-    { key:"1mile",     m:1609,   label:"1 milha" },
-    { key:"2mile",     m:3219,   label:"2 milhas"},
-    { key:"5K",        m:5000,   label:"5K"      },
-    { key:"10K",       m:10000,  label:"10K"     },
-    { key:"15K",       m:15000,  label:"15K"     },
-    { key:"10mile",    m:16093,  label:"10 milhas"},
-    { key:"20K",       m:20000,  label:"20K"     },
-    { key:"HalfMarathon", m:21097, label:"Meia"  },
-    { key:"30K",       m:30000,  label:"30K"     },
-    { key:"Marathon",  m:42195,  label:"Maratona"},
-  ];
-
-  const runs  = acts.filter(a => a.type === "Run");
-  const races = runs.filter(r => r.workout_type === 1);
-
-  // Aggregate best_efforts from all loaded activities
-  const beBest = {}; // key → best effort object
-  runs.forEach(act => {
-    (act.best_efforts || []).forEach(be => {
-      const key = be.name; // e.g. "10K", "Half-Marathon", etc.
-      const prev = beBest[key];
-      if (!prev || be.elapsed_time < prev.elapsed_time) beBest[key] = { ...be, actName: act.name, actDate: act.start_date, hr: act.average_heartrate };
-    });
-  });
-
-  // Bracket-based records (local calc as fallback / complement)
+  const runs = acts.filter(a => a.type === "Run" && a.distance > 0);
   const brackets = [
-    { label:"5K",       min:4900,  max:5100  },
-    { label:"10K",      min:9800,  max:10200 },
-    { label:"Meia",     min:20900, max:21500 },
-    { label:"Maratona", min:41800, max:42800 },
+    { label: "10K",      min: 9800,  max: 10200 },
+    { label: "Meia",     min: 20900, max: 21500 },
+    { label: "Maratona", min: 41800, max: 42800 },
   ];
   const makePR = (candidates) => {
     if (!candidates.length) return null;
     const best = candidates.reduce((b, r) => r.average_speed > b.average_speed ? r : b);
-    return { pr: fmtTime(best.moving_time), pace: fmtPace(1000/best.average_speed), date: fmtDate(best.start_date), name: best.name, hr: best.average_heartrate ? Math.round(best.average_heartrate) : null };
-  };
-  const localPRs = {};
-  brackets.forEach(b => {
-    const all = runs.filter(r => r.distance >= b.min && r.distance <= b.max);
-    const racesB = all.filter(r => r.workout_type === 1);
-    localPRs[b.label] = { record: makePR(all), race: makePR(racesB), count: all.length, raceCount: racesB.length };
-  });
-
-  // Build per-distance rows
-  return DISTS.map(d => {
-    // Try best_efforts first (Strava's official segment timing)
-    const beKey = Object.keys(beBest).find(k => k.toLowerCase().replace(/[- ]/g,"") === d.key.toLowerCase().replace(/[- ]/g,"")
-      || k === "Half-Marathon" && d.key === "HalfMarathon"
-      || k === "1/2 mile" && d.key === "1mile"
-    );
-    const be = beKey ? beBest[beKey] : null;
-
-    const beEntry = be ? {
-      pr:   fmtTime(be.elapsed_time),
-      pace: fmtPace(be.elapsed_time / (d.m / 1000)),
-      date: fmtDate(be.actDate),
-      name: be.actName,
-      hr:   be.hr ? Math.round(be.hr) : null,
-      source: "strava",
-    } : null;
-
-    // Bracket local PR (where applicable)
-    const local = localPRs[d.label] || {};
-
-    // Race best from races bracket
-    const raceEntry = local.race || null;
-
     return {
-      label:     d.label,
-      dist:      d.m,
-      bestEffort: beEntry,           // Strava official best effort
-      record:    beEntry || local.record || null,  // best available
-      race:      raceEntry,
-      count:     local.count || 0,
-      raceCount: local.raceCount || 0,
+      pr: fmtTime(best.moving_time),
+      pace: fmtPace(1000 / best.average_speed),
+      date: fmtDate(best.start_date),
+      name: best.name,
+      hr: best.average_heartrate ? Math.round(best.average_heartrate) : null,
+      id: best.id,
     };
-  }).filter(d => d.record || d.bestEffort); // hide distances with no data
+  };
+  return brackets.map(b => {
+    const all   = runs.filter(r => r.distance >= b.min && r.distance <= b.max);
+    const races = all.filter(r => r.workout_type === 1);
+    return {
+      label: b.label,
+      count: all.length,
+      raceCount: races.length,
+      record: makePR(all),    // melhor tempo real (treino ou prova)
+      race:   makePR(races),  // melhor tempo em prova oficial
+    };
+  });
 }
 
 function getRadarData(acts, tsbData) {
