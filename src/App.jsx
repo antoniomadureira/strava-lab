@@ -42,7 +42,6 @@ function generateMockActivities() {
     { daysAgo: 8,  name: "Meia Maratona Porto", dist: 21097, pace: 247, hr: 168 },
     { daysAgo: 35, name: "10K Matosinhos", dist: 10000, pace: 238, hr: 172 },
     { daysAgo: 62, name: "Maratona Lisboa", dist: 42195, pace: 265, hr: 162 },
-    { daysAgo: 80, name: "5K Parkrun", dist: 5000, pace: 233, hr: 175 },
   ];
   landmarks.forEach((l, idx) => {
     acts.push({
@@ -155,28 +154,88 @@ function getMonthlyData(acts) {
 }
 
 function getPRs(acts) {
-  const runs = acts.filter(a => a.type === "Run" && a.distance > 0);
-  const brackets = [
-    { label: "5K",       min: 4500,  max: 6000  },
-    { label: "10K",      min: 9000,  max: 11000 },
-    { label: "Meia",     min: 19000, max: 23000 },
-    { label: "Maratona", min: 40000, max: 45000 },
+  // Strava best_efforts standard distances (metres → label)
+  const DISTS = [
+    { key:"400m",      m:400,    label:"400m"    },
+    { key:"1K",        m:1000,   label:"1K"      },
+    { key:"1mile",     m:1609,   label:"1 milha" },
+    { key:"2mile",     m:3219,   label:"2 milhas"},
+    { key:"5K",        m:5000,   label:"5K"      },
+    { key:"10K",       m:10000,  label:"10K"     },
+    { key:"15K",       m:15000,  label:"15K"     },
+    { key:"10mile",    m:16093,  label:"10 milhas"},
+    { key:"20K",       m:20000,  label:"20K"     },
+    { key:"HalfMarathon", m:21097, label:"Meia"  },
+    { key:"30K",       m:30000,  label:"30K"     },
+    { key:"Marathon",  m:42195,  label:"Maratona"},
   ];
-  return brackets.map(b => {
-    const candidates = runs.filter(r => r.distance >= b.min && r.distance <= b.max);
-    if (!candidates.length) return { label: b.label, pr: null, pace: null, date: null, count: 0 };
-    // Best = fastest average speed (not race-only — includes training runs)
-    const best = candidates.reduce((best, r) => (r.average_speed > best.average_speed ? r : best));
-    return {
-      label: b.label,
-      pr: fmtTime(best.moving_time),
-      pace: fmtPace(1000 / best.average_speed),
-      date: fmtDate(best.start_date),
-      name: best.name,
-      count: candidates.length,
-      hr: best.average_heartrate ? Math.round(best.average_heartrate) : null,
-    };
+
+  const runs  = acts.filter(a => a.type === "Run");
+  const races = runs.filter(r => r.workout_type === 1);
+
+  // Aggregate best_efforts from all loaded activities
+  const beBest = {}; // key → best effort object
+  runs.forEach(act => {
+    (act.best_efforts || []).forEach(be => {
+      const key = be.name; // e.g. "10K", "Half-Marathon", etc.
+      const prev = beBest[key];
+      if (!prev || be.elapsed_time < prev.elapsed_time) beBest[key] = { ...be, actName: act.name, actDate: act.start_date, hr: act.average_heartrate };
+    });
   });
+
+  // Bracket-based records (local calc as fallback / complement)
+  const brackets = [
+    { label:"5K",       min:4900,  max:5100  },
+    { label:"10K",      min:9800,  max:10200 },
+    { label:"Meia",     min:20900, max:21500 },
+    { label:"Maratona", min:41800, max:42800 },
+  ];
+  const makePR = (candidates) => {
+    if (!candidates.length) return null;
+    const best = candidates.reduce((b, r) => r.average_speed > b.average_speed ? r : b);
+    return { pr: fmtTime(best.moving_time), pace: fmtPace(1000/best.average_speed), date: fmtDate(best.start_date), name: best.name, hr: best.average_heartrate ? Math.round(best.average_heartrate) : null };
+  };
+  const localPRs = {};
+  brackets.forEach(b => {
+    const all = runs.filter(r => r.distance >= b.min && r.distance <= b.max);
+    const racesB = all.filter(r => r.workout_type === 1);
+    localPRs[b.label] = { record: makePR(all), race: makePR(racesB), count: all.length, raceCount: racesB.length };
+  });
+
+  // Build per-distance rows
+  return DISTS.map(d => {
+    // Try best_efforts first (Strava's official segment timing)
+    const beKey = Object.keys(beBest).find(k => k.toLowerCase().replace(/[- ]/g,"") === d.key.toLowerCase().replace(/[- ]/g,"")
+      || k === "Half-Marathon" && d.key === "HalfMarathon"
+      || k === "1/2 mile" && d.key === "1mile"
+    );
+    const be = beKey ? beBest[beKey] : null;
+
+    const beEntry = be ? {
+      pr:   fmtTime(be.elapsed_time),
+      pace: fmtPace(be.elapsed_time / (d.m / 1000)),
+      date: fmtDate(be.actDate),
+      name: be.actName,
+      hr:   be.hr ? Math.round(be.hr) : null,
+      source: "strava",
+    } : null;
+
+    // Bracket local PR (where applicable)
+    const local = localPRs[d.label] || {};
+
+    // Race best from races bracket
+    const raceEntry = local.race || null;
+
+    return {
+      label:     d.label,
+      dist:      d.m,
+      bestEffort: beEntry,           // Strava official best effort
+      record:    beEntry || local.record || null,  // best available
+      race:      raceEntry,
+      count:     local.count || 0,
+      raceCount: local.raceCount || 0,
+    };
+  }).filter(d => d.record || d.bestEffort); // hide distances with no data
 }
 
 function getRadarData(acts, tsbData) {
@@ -870,6 +929,95 @@ function PRCard({ pr }) {
 }
 
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
+function PRSTab({ prs, runs, setSelectedAct }) {
+  const [prsSubTab, setPrsSubTab] = React.useState("records");
+
+  const paceBar = (paceStr, col) => {
+    if (!paceStr) return null;
+    const secs = parseInt(paceStr.split(":")[0])*60 + parseInt(paceStr.split(":")[1]);
+    const pct  = Math.max(8, Math.min(100, Math.round((390 - secs) / (390 - 180) * 100)));
+    return <div style={{ height:6, background:"rgba(255,255,255,.06)", borderRadius:3, overflow:"hidden", marginTop:6 }}>
+      <div style={{ width:`${pct}%`, height:"100%", background:col, borderRadius:3, transition:"width .7s ease" }}/>
+    </div>;
+  };
+
+  const PRSection = ({ data, type }) => (
+    <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+      {data.map(d => {
+        const entry = type === "race" ? d.race : d.record;
+        const secs  = entry?.pace ? parseInt(entry.pace.split(":")[0])*60+parseInt(entry.pace.split(":")[1]) : 0;
+        const col   = secs < 270 ? "#FC4C02" : secs < 330 ? "#ffa726" : "#00C4B4";
+        return (
+          <div key={d.label} style={{ background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.08)", borderRadius:16, padding:"20px 24px" }}>
+            <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12 }}>
+              <div>
+                <div style={{ fontSize:10, color:"rgba(255,255,255,.35)", letterSpacing:".1em", textTransform:"uppercase", marginBottom:6 }}>
+                  {d.label} {type === "race" ? `· ${d.raceCount} prova${d.raceCount!==1?"s":""}` : `· ${d.count} corrida${d.count!==1?"s":""}`}
+                </div>
+                {entry ? <>
+                  <div style={{ fontSize:42, fontWeight:800, fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:"-.5px", color:"#fff", lineHeight:1 }}>{entry.pr}</div>
+                  <div style={{ fontSize:16, fontWeight:700, color:col, marginTop:4 }}>{entry.pace}/km</div>
+                </> : (
+                  <div style={{ fontSize:14, color:"rgba(255,255,255,.25)", marginTop:8 }}>
+                    {type === "race" ? "Sem provas classificadas nesta distância" : "Sem corridas nesta distância"}
+                  </div>
+                )}
+              </div>
+              {entry && (
+                <div style={{ textAlign:"right", flexShrink:0 }}>
+                  {entry.hr && <div style={{ fontSize:13, color:"#ef5350", marginBottom:4 }}>♥ {entry.hr}bpm</div>}
+                  <div style={{ fontSize:11, color:"rgba(255,255,255,.3)" }}>{entry.date}</div>
+                  <div style={{ fontSize:11, color:"rgba(255,255,255,.22)", maxWidth:160, marginTop:2 }}>{entry.name}</div>
+                </div>
+              )}
+            </div>
+            {entry && paceBar(entry.pace, col)}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+      <div style={{ display:"flex", gap:8 }}>
+        {[{id:"records",label:"⏱ Recordes pessoais"},{id:"races",label:"🏅 Provas oficiais"}].map(t=>(
+          <button key={t.id} onClick={()=>setPrsSubTab(t.id)} style={{
+            padding:"8px 18px", borderRadius:20, border:"none", cursor:"pointer", fontSize:12, fontWeight:600,
+            background: prsSubTab===t.id ? "#FC4C02" : "rgba(255,255,255,.06)",
+            color: prsSubTab===t.id ? "#fff" : "rgba(255,255,255,.5)",
+            transition:"all .2s",
+          }}>{t.label}</button>
+        ))}
+      </div>
+
+      {prsSubTab === "records" && <>
+        <div style={{ fontSize:11, color:"rgba(255,255,255,.3)", paddingLeft:2 }}>
+          Melhor tempo real por distância — treinos e provas. Gama exacta: 10K ±200m · Meia ±300m · Maratona ±500m.
+        </div>
+        <PRSection data={prs} type="record"/>
+      </>}
+
+      {prsSubTab === "races" && <>
+        <div style={{ fontSize:11, color:"rgba(255,255,255,.3)", paddingLeft:2 }}>
+          Apenas corridas marcadas como <strong style={{color:"rgba(255,255,255,.45)"}}>Prova</strong> no Strava (workout_type = Race).
+        </div>
+        <PRSection data={prs} type="race"/>
+      </>}
+
+      <Card>
+        <CardHeader title="Corridas mais rápidas" info={"Corridas com distância > 8km ordenadas por pace médio.\nClica para ver detalhe."}/>
+        <div className="race-table-header">
+          {["Corrida","Dist","Tempo","Pace","FC","Data"].map(h=>(
+            <span key={h} style={{ fontSize:9,color:"rgba(255,255,255,.22)",fontWeight:700,letterSpacing:".09em",textTransform:"uppercase" }}>{h}</span>
+          ))}
+        </div>
+        {runs.filter(r=>r.distance>8000).sort((a,b)=>b.average_speed-a.average_speed).slice(0,15).map(a=><ActivityRow key={a.id} act={a} onClick={()=>setSelectedAct(a)}/>)}
+      </Card>
+    </div>
+  );
+}
+
 export default function StravaIntelligence() {
   const [token,      setToken]      = useState(null);
   const [athlete,    setAthlete]    = useState(null);
@@ -916,11 +1064,20 @@ export default function StravaIntelligence() {
         const ath = await fetch("https://www.strava.com/api/v3/athlete", { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.json());
         const stats = await fetch(`https://www.strava.com/api/v3/athletes/${ath.id}/stats`, { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.json());
         ath.stats = stats; setAthlete(ath);
-        const pages = await Promise.all([1,2,3].map(p =>
+        const now = new Date();
+        const prevYearStart = Math.floor(new Date(now.getFullYear()-1, 0, 1).getTime()/1000);
+        const pages = await Promise.all([1,2,3,4,5].map(p =>
           fetch(`https://www.strava.com/api/v3/athlete/activities?per_page=100&page=${p}`,
             { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.json())
         ));
-        setActivities(pages.flat().filter(a=>a.id));
+        // Also fetch previous year Jan→today separately to guarantee comparison data
+        const prevYearPages = await Promise.all([1,2].map(p =>
+          fetch(`https://www.strava.com/api/v3/athlete/activities?per_page=100&page=${p}&after=${prevYearStart}&before=${Math.floor(new Date(now.getFullYear()-1, now.getMonth(), now.getDate(), 23,59,59).getTime()/1000)}`,
+            { headers:{Authorization:`Bearer ${token}`} }).then(r=>r.json())
+        ));
+        const combined = [...pages.flat(), ...prevYearPages.flat()];
+        const unique = [...new Map(combined.filter(a=>a.id).map(a=>[a.id,a])).values()];
+        setActivities(unique);
       } catch { setError("Erro a carregar dados."); }
       setLoading(false);
     })();
@@ -1084,16 +1241,22 @@ export default function StravaIntelligence() {
 
             {/* ── Totais ano atual em destaque ── */}
             {(() => {
-              const thisYear = new Date().getFullYear();
+              const now      = new Date();
+              const thisYear = now.getFullYear();
               const lastYear = thisYear - 1;
-              const yearRuns = runs.filter(r => new Date(r.start_date).getFullYear() === thisYear);
-              const prevRuns = runs.filter(r => new Date(r.start_date).getFullYear() === lastYear);
+              // Mesmo período do ano passado: Jan 1 até ao dia/mês actual do ano anterior
+              const cutoff   = new Date(lastYear, now.getMonth(), now.getDate(), 23, 59, 59);
+              const yearStart = new Date(thisYear, 0, 1);
+              const prevStart = new Date(lastYear, 0, 1);
+
+              const yearRuns = runs.filter(r => { const d = new Date(r.start_date); return d >= yearStart && d <= now; });
+              const prevRuns = runs.filter(r => { const d = new Date(r.start_date); return d >= prevStart && d <= cutoff; });
               const stats = [
                 {
                   label: "Corridas",
                   icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="5" r="2"/><path d="M10.2 8.2L7 14h3l1 5h2l1-5h3l-3.2-5.8"/></svg>,
                   color: "#00C4B4",
-                  info: `Corridas registadas no Strava em ${thisYear} vs ${lastYear}.`,
+                  info: `Corridas em ${thisYear} vs mesmo período de ${lastYear} (Jan 1 → hoje).`,
                   year:  yearRuns.length,
                   prev:  prevRuns.length,
                   fmt:   v => v,
@@ -1102,7 +1265,7 @@ export default function StravaIntelligence() {
                   label: "Distância",
                   icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12h18M3 6l9-3 9 3M3 18l9 3 9-3"/></svg>,
                   color: "#00C4B4",
-                  info: `Distância total em ${thisYear} vs ${lastYear}. Baseado nas últimas 300 atividades carregadas.`,
+                  info: `Distância em ${thisYear} vs mesmo período de ${lastYear} (Jan 1 → hoje).`,
                   year:  yearRuns.reduce((s,r)=>s+r.distance,0),
                   prev:  prevRuns.reduce((s,r)=>s+r.distance,0),
                   fmt:   v => fmtDist(v),
@@ -1111,7 +1274,7 @@ export default function StravaIntelligence() {
                   label: "Tempo",
                   icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
                   color: "#00C4B4",
-                  info: `Tempo em movimento em ${thisYear} vs ${lastYear}.`,
+                  info: `Tempo em movimento em ${thisYear} vs mesmo período de ${lastYear} (Jan 1 → hoje).`,
                   year:  yearRuns.reduce((s,r)=>s+r.moving_time,0),
                   prev:  prevRuns.reduce((s,r)=>s+r.moving_time,0),
                   fmt:   v => fmtTime(v),
@@ -1120,7 +1283,7 @@ export default function StravaIntelligence() {
                   label: "Elevação",
                   icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 4 12 14 8 8 2 18"/></svg>,
                   color: "#00C4B4",
-                  info: `Elevação acumulada em ${thisYear} vs ${lastYear}.`,
+                  info: `Elevação em ${thisYear} vs mesmo período de ${lastYear} (Jan 1 → hoje).`,
                   year:  yearRuns.reduce((s,r)=>s+(r.total_elevation_gain||0),0),
                   prev:  prevRuns.reduce((s,r)=>s+(r.total_elevation_gain||0),0),
                   fmt:   v => `${Math.round(v)}m`,
@@ -1129,7 +1292,7 @@ export default function StravaIntelligence() {
                   label: "FC Média",
                   icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>,
                   color: "#FC4C02",
-                  info: `FC média de todas as corridas com dados de FC em ${thisYear}. Zonas Garmin: Z1≤108 Z2≤133 Z3≤152 Z4≤167 Z5≥168.`,
+                  info: `FC média em ${thisYear} vs mesmo período de ${lastYear}. Zonas Garmin: Z1≤108 Z2≤133 Z3≤152 Z4≤167 Z5≥168.`,
                   year:  Math.round(yearRuns.filter(r=>r.average_heartrate).reduce((s,r)=>s+r.average_heartrate,0)/(yearRuns.filter(r=>r.average_heartrate).length||1)),
                   prev:  Math.round(prevRuns.filter(r=>r.average_heartrate).reduce((s,r)=>s+r.average_heartrate,0)/(prevRuns.filter(r=>r.average_heartrate).length||1)),
                   fmt:   v => `${v||"—"}${v?"bpm":""}`,
@@ -1614,61 +1777,10 @@ export default function StravaIntelligence() {
           </div>
         )}
 
+
         {/* ══ RECORDES / PRs ════════════════════════════════════════════════════ */}
-        {tab === "prs" && (
-          <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
-            <div className="pr-grid">
-              {prs.map(pr => <PRCard key={pr.label} pr={pr}/>)}
-            </div>
-            {/* Race pace comparison — horizontal legível */}
-            <Card>
-              <CardHeader title="Melhor pace por distância" info={"Melhor pace registado em treinos e provas por cada distância.\nValores mais baixos (barras mais compridas) = mais rápido."}/>
-              <div style={{ padding:"20px 24px" }}>
-                {prs.filter(p=>p.pr).map(p => {
-                  const secs = p.pace ? parseInt(p.pace.split(":")[0])*60+parseInt(p.pace.split(":")[1]) : 0;
-                  // 3:30/km = 210s (elite) → 6:30/km = 390s (base) — normalise to bar width
-                  const pct = Math.max(10, Math.min(100, Math.round((390 - secs) / (390 - 180) * 100)));
-                  const col = secs < 270 ? "#FC4C02" : secs < 330 ? "#ffa726" : "#00C4B4";
-                  return (
-                    <div key={p.label} style={{ marginBottom:16 }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
-                        <span style={{ fontSize:12, fontWeight:600, color:"rgba(255,255,255,.7)", letterSpacing:".04em" }}>{p.label}</span>
-                        <div style={{ display:"flex", gap:12, alignItems:"center" }}>
-                          <span style={{ fontSize:11, color:"rgba(255,255,255,.35)" }}>pace</span>
-                          <span style={{ fontSize:15, fontWeight:700, fontFamily:"'Barlow Condensed',sans-serif", color:col }}>{p.pace}/km</span>
-                          <span style={{ fontSize:11, color:"rgba(255,255,255,.35)" }}>tempo</span>
-                          <span style={{ fontSize:15, fontWeight:700, fontFamily:"'Barlow Condensed',sans-serif", color:"rgba(255,255,255,.7)" }}>{p.pr}</span>
-                        </div>
-                      </div>
-                      <div style={{ height:8, background:"rgba(255,255,255,.06)", borderRadius:4, overflow:"hidden" }}>
-                        <div style={{ width:`${pct}%`, height:"100%", background:col, borderRadius:4, transition:"width .6s ease" }}/>
-                      </div>
-                      <div style={{ display:"flex", justifyContent:"space-between", marginTop:4, fontSize:10, color:"rgba(255,255,255,.22)" }}>
-                        <span>{p.name}</span>
-                        <span>{p.date}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-                {prs.every(p=>!p.pr) && (
-                  <p style={{ color:"rgba(255,255,255,.3)", fontSize:13, textAlign:"center", padding:"20px 0" }}>
-                    Sem corridas suficientes nessas distâncias nas últimas 300 atividades.
-                  </p>
-                )}
-              </div>
-            </Card>
-            {/* Top 10 races */}
-            <Card>
-              <CardHeader title="Melhores corridas por distância" info={"Corridas com distância > 4km ordenadas por velocidade média.\nMostra as tuas corridas mais rápidas independentemente da distância."}/>
-              <div className="race-table-header">
-                {["Corrida","Dist","Tempo","Pace","FC","Data"].map(h=>(
-                  <span key={h} style={{ fontSize:9,color:"rgba(255,255,255,.22)",fontWeight:700,letterSpacing:".09em",textTransform:"uppercase" }}>{h}</span>
-                ))}
-              </div>
-              {runs.filter(r=>r.distance>4000).sort((a,b)=>b.average_speed-a.average_speed).slice(0,12).map(a=><ActivityRow key={a.id} act={a} onClick={()=>setSelectedAct(a)}/>)}
-            </Card>
-          </div>
-        )}
+        {tab === "prs" && <PRSTab prs={prs} runs={runs} setSelectedAct={setSelectedAct}/>}
+
 
         {/* ══ HEATMAP ════════════════════════════════════════════════════════════ */}
         {tab === "heatmap" && (
